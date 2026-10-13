@@ -22,19 +22,15 @@
   a{color:var(--accent);text-decoration:none}
   button{font-family:inherit;cursor:pointer}
   .wrap{max-width:640px;margin:0 auto;padding:0 14px 90px}
-  /* header */
-  header{
-    position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);
-    background:rgba(14,16,20,.78);border-bottom:1px solid var(--border);
-  }
+  header{position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);background:rgba(14,16,20,.78);border-bottom:1px solid var(--border)}
   .hrow{max-width:640px;margin:0 auto;padding:12px 14px;display:flex;align-items:center;gap:12px}
   .logo{display:flex;align-items:center;gap:9px;font-weight:800;font-size:20px;letter-spacing:-.3px}
   .logo .dot{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--pink));display:grid;place-items:center;font-size:15px}
   .hspacer{flex:1}
-  .avatar{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;flex:0 0 auto;font-size:15px;border:1px solid rgba(255,255,255,.08)}
+  .avatar{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;flex:0 0 auto;font-size:15px;border:1px solid rgba(255,255,255,.08);overflow:hidden}
+  .avatar img{width:100%;height:100%;object-fit:cover}
   .avatar.lg{width:64px;height:64px;font-size:24px}
   .avatar.sm{width:30px;height:30px;font-size:12px}
-  /* buttons */
   .btn{border:1px solid var(--border);background:var(--card2);color:var(--text);padding:9px 14px;border-radius:11px;font-weight:600;font-size:14px;transition:.15s}
   .btn:hover{background:#262b36;border-color:#39404e}
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -43,9 +39,7 @@
   .btn.sm{padding:6px 11px;font-size:13px;border-radius:9px}
   .btn.block{width:100%;justify-content:center;display:flex;padding:12px}
   .btn[disabled]{opacity:.5;cursor:not-allowed}
-  /* cards */
   .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:14px 0}
-  /* login */
   .hero{text-align:center;padding:34px 8px 6px}
   .hero h1{font-size:30px;margin:14px 0 6px;letter-spacing:-.6px}
   .hero p{color:var(--muted);margin:0 auto;max-width:420px}
@@ -53,13 +47,9 @@
   .tab{flex:1;text-align:center;padding:9px;border-radius:9px;font-size:13px;font-weight:600;color:var(--muted);border:none;background:transparent}
   .tab.active{background:var(--card2);color:var(--text)}
   label.f{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px;font-weight:600}
-  input,textarea,select{
-    width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);
-    padding:11px 13px;border-radius:11px;font-size:15px;font-family:inherit;outline:none;
-  }
+  input,textarea,select{width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:11px 13px;border-radius:11px;font-size:15px;font-family:inherit;outline:none}
   input:focus,textarea:focus{border-color:var(--accent)}
   textarea{resize:vertical;min-height:74px}
-  /* composer */
   .composer .ctabs{display:flex;gap:8px;margin-bottom:10px}
   .chip{padding:7px 13px;border-radius:20px;border:1px solid var(--border);background:var(--bg2);color:var(--muted);font-size:13px;font-weight:600}
   .chip.active{background:var(--accent-soft);border-color:var(--accent);color:#c9bcff}
@@ -70,7 +60,6 @@
   .file-btn{display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border:1px dashed var(--border);border-radius:11px;color:var(--muted);font-size:13px;font-weight:600;background:var(--bg2)}
   .file-btn:hover{border-color:var(--accent);color:#c9bcff}
   input[type=file]{display:none}
-  /* post */
   .post-head{display:flex;gap:11px;align-items:flex-start}
   .pname{font-weight:700;font-size:15px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
   .pmuted{color:var(--muted);font-size:13px}
@@ -82,7 +71,6 @@
   .act{display:flex;align-items:center;gap:6px;background:transparent;border:none;color:var(--muted);font-size:13.5px;font-weight:600;padding:7px 11px;border-radius:10px;transition:.15s}
   .act:hover{background:var(--card2);color:var(--text)}
   .act.liked{color:var(--pink)}
-  .act svg{width:18px;height:18px}
   .comments{margin-top:10px;border-top:1px solid var(--border);padding-top:12px;display:none}
   .comments.open{display:block}
   .citem{display:flex;gap:9px;margin-bottom:10px}
@@ -93,7 +81,6 @@
   .cform input{flex:1}
   .empty{text-align:center;color:var(--muted);padding:40px 10px}
   .empty .big{font-size:40px;margin-bottom:8px}
-  /* profile */
   .pcover{height:96px;border-radius:16px 16px 0 0;background:linear-gradient(120deg,#7c5cff,#ec4899)}
   .pcard{margin-top:-40px;padding:0 16px 16px}
   .pmeta{display:flex;justify-content:space-between;align-items:flex-end;gap:10px}
@@ -102,7 +89,6 @@
   .tabsline{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:16px 0 0}
   .tabsline button{background:transparent;border:none;color:var(--muted);padding:11px 14px;font-weight:600;font-size:14px;border-bottom:2px solid transparent}
   .tabsline button.active{color:var(--text);border-bottom-color:var(--accent)}
-  /* misc */
   .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#20242e;border:1px solid var(--border);color:var(--text);padding:11px 18px;border-radius:12px;font-size:14px;font-weight:600;opacity:0;transition:.25s;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.4);max-width:90vw;text-align:center}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;place-items:center;z-index:150;padding:16px}
@@ -111,6 +97,9 @@
   .note{font-size:12.5px;color:var(--muted);background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;margin-top:12px}
   .linkbtn{background:none;border:none;color:var(--accent);font-weight:600;font-size:13.5px;padding:0}
   .back{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-weight:600;font-size:14px;margin:14px 0 0}
+  .setup code{background:var(--bg2);border:1px solid var(--border);padding:2px 6px;border-radius:6px;font-size:13px}
+  .setup ol{padding-left:20px}
+  .setup li{margin:6px 0}
 </style>
 </head>
 <body>
@@ -124,11 +113,9 @@
 <main id="app" class="wrap"></main>
 <div class="toast" id="toast"></div>
 
-<!-- profile edit modal -->
 <div class="modal" id="editModal">
   <div class="box">
     <h3 style="margin:0 0 4px">Edit profile</h3>
-    <p class="pmuted" style="margin:0 0 6px">Ye demo profile hai — naam aur bio badal sakte ho.</p>
     <label class="f">Display name</label>
     <input id="edName" maxlength="40" />
     <label class="f">Bio</label>
@@ -142,43 +129,27 @@
   </div>
 </div>
 
-<script>
-/* ============================================================
-   Pulse — a self-contained social feed demo
-   Data lives in IndexedDB (this browser). No server needed.
-   Features: text/photo/video posts, profiles (incl. anonymous),
-   GitHub/email/phone (simulated) login, like, comment, share.
-   ============================================================ */
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-/* ---------- tiny IndexedDB wrapper ---------- */
-const DB_NAME = "pulse_db", DB_VER = 1;
-let db;
-function openDB(){
-  return new Promise((res, rej)=>{
-    const r = indexedDB.open(DB_NAME, DB_VER);
-    r.onupgradeneeded = e=>{
-      const d = e.target.result;
-      if(!d.objectStoreNames.contains("users")) d.createObjectStore("users",{keyPath:"id"});
-      if(!d.objectStoreNames.contains("posts")) d.createObjectStore("posts",{keyPath:"id"});
-      if(!d.objectStoreNames.contains("media")) d.createObjectStore("media");
-    };
-    r.onsuccess = e=>{ db = e.target.result; res(db); };
-    r.onerror = e=>rej(e.target.error);
-  });
-}
-const store = (name, mode="readonly")=>db.transaction(name, mode).objectStore(name);
-const dbGet = (s,k)=>new Promise((res,rej)=>{const r=store(s).get(k);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
-const dbAll = (s)=>new Promise((res,rej)=>{const r=store(s).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
-const dbPut = (s,v,k)=>new Promise((res,rej)=>{const r=store(s,"readwrite").put(v,k);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
-const dbDel = (s,k)=>new Promise((res,rej)=>{const r=store(s,"readwrite").delete(k);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});
+/* ============================================================
+   CONFIG  ←  YAHAN apni Supabase details daalo
+   Supabase dashboard -> Project Settings -> API
+   ============================================================ */
+const SUPABASE_URL      = "YOUR_SUPABASE_URL";       // e.g. https://abcdxyz.supabase.co
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";  // the long "anon public" key
+/* ============================================================ */
+
+const CONFIGURED = SUPABASE_URL.startsWith("http") && !SUPABASE_URL.includes("YOUR_")
+                   && SUPABASE_ANON_KEY.length > 20 && !SUPABASE_ANON_KEY.includes("YOUR_");
+const sb = CONFIGURED ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 /* ---------- helpers ---------- */
-const uid = ()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const esc = (s)=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const COLORS = ["#7c5cff","#ec4899","#22c55e","#f59e0b","#06b6d4","#ef4444","#8b5cf6","#14b8a6"];
 const colorFor = (id)=>{let h=0;for(const c of String(id))h=(h*31+c.charCodeAt(0))>>>0;return COLORS[h%COLORS.length];};
 function timeAgo(ts){
-  const s = Math.floor((Date.now()-ts)/1000);
+  const s = Math.floor((Date.now()-new Date(ts).getTime())/1000);
   if(s<60) return "abhi";
   if(s<3600) return Math.floor(s/60)+"m";
   if(s<86400) return Math.floor(s/3600)+"h";
@@ -186,91 +157,59 @@ function timeAgo(ts){
   return new Date(ts).toLocaleDateString("en-IN",{day:"numeric",month:"short"});
 }
 function toast(msg){
-  const t = document.getElementById("toast");
-  t.textContent = msg; t.classList.add("show");
-  clearTimeout(t._t); t._t = setTimeout(()=>t.classList.remove("show"), 2200);
+  const t=document.getElementById("toast");
+  t.textContent=msg; t.classList.add("show");
+  clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2600);
 }
-function avatarHTML(user, size=""){
-  const emoji = user && user.emoji;
-  const cls = "avatar"+(size?" "+size:"");
-  if(emoji) return `<div class="${cls}" style="background:${colorFor(user.id)}">${esc(emoji)}</div>`;
-  const initial = (user && user.name ? user.name.trim()[0] : "?").toUpperCase();
-  return `<div class="${cls}" style="background:${colorFor(user.id)}">${esc(initial)}</div>`;
+function avatarHTML(u,size=""){
+  const cls="avatar"+(size?" "+size:"");
+  if(!u) return `<div class="${cls}" style="background:#444">?</div>`;
+  if(u.emoji) return `<div class="${cls}" style="background:${colorFor(u.id)}">${esc(u.emoji)}</div>`;
+  const initial=(u.name?u.name.trim()[0]:"?").toUpperCase();
+  return `<div class="${cls}" style="background:${colorFor(u.id)}">${esc(initial)}</div>`;
+}
+function anonTag(){
+  const a=["Fox","Panda","Owl","Wolf","Tiger","Koala","Lynx","Raven","Otter","Hawk"];
+  return a[Math.floor(Math.random()*a.length)]+" #"+Math.floor(1000+Math.random()*9000);
 }
 
 /* ---------- state ---------- */
-let me = null;
-let users = {};
-let posts = [];
+let user = null;        // auth user
+let profile = null;     // profile row
+let posts = [];         // feed
+let myLikes = new Set();
 const mediaURLCache = {};
 
-async function loadAll(){
-  users = {}; posts = [];
-  (await dbAll("users")).forEach(u=>users[u.id]=u);
-  posts = (await dbAll("posts")).sort((a,b)=>b.createdAt-a.createdAt);
-}
-async function getMediaURL(mediaId){
-  if(mediaURLCache[mediaId]) return mediaURLCache[mediaId];
-  const blob = await dbGet("media", mediaId);
-  if(!blob) return "";
-  const url = URL.createObjectURL(blob);
-  mediaURLCache[mediaId] = url;
-  return url;
-}
-
-/* ---------- routing ---------- */
-function go(hash){ location.hash = hash; }
-window.addEventListener("hashchange", render);
-function route(){
-  const h = location.hash.replace(/^#/,"") || "/feed";
-  return h.split("/").filter(Boolean); // e.g. ["feed"] or ["profile","id"]
-}
-
-/* ---------- auth ---------- */
-async function signIn(user){
-  await dbPut("users", user);
-  users[user.id] = user;
-  localStorage.setItem("pulse_session", user.id);
-  me = user;
-  toast("Welcome, "+user.name+"!");
-  go("/feed"); render();
-}
-function signOut(){
-  localStorage.removeItem("pulse_session");
-  me = null; toast("Signed out"); go("/feed"); render();
-}
-function anonTag(){
-  const animals=["Fox","Panda","Owl","Wolf","Tiger","Koala","Lynx","Raven","Otter","Hawk"];
-  const a=animals[Math.floor(Math.random()*animals.length)];
-  return a+" #"+Math.floor(1000+Math.random()*9000);
-}
-
-/* ---------- seed demo content ---------- */
-async function seedIfEmpty(){
-  if((await dbAll("posts")).length) return;
-  const demo = [
-    {id:uid(),name:"Aarav Mehta",handle:"aarav",provider:"github",bio:"Building things on the internet.",emoji:"🛠️"},
-    {id:uid(),name:"Priya",handle:"priya",provider:"email",bio:"Photography + chai.",emoji:"📷"},
-    {id:uid(),name:"Anonymous",handle:"anon",provider:"anon",anon:true,anonTag:"Owl #2048",bio:"",emoji:"🕶️"}
-  ];
-  demo.forEach(u=>dbPut("users",u));
-  const now = Date.now();
-  const seedPosts = [
-    {author:demo[0].id,type:"text",text:"Pulse pe pehla post! Yahan text, photo aur video — sab share kar sakte ho. Like, comment, share bhi hai. 🚀",createdAt:now-1000*60*40},
-    {author:demo[1].id,type:"text",text:"Aaj ki shaam ki roshni. Sunsets never get old. 🌇",createdAt:now-1000*60*90},
-    {author:demo[2].id,type:"text",text:"Koi anonymous ban ke bhi post kar sakta hai — naam chhupa ke baat karo.",createdAt:now-1000*60*180}
-  ];
-  for(const p of seedPosts){
-    await dbPut("posts",{id:uid(),author:p.author,type:p.type,text:p.text,mediaId:null,likes:[],comments:[],createdAt:p.createdAt});
-  }
+/* ============================================================
+   CONFIG GUARD
+   ============================================================ */
+function viewSetup(){
+  document.getElementById("app").innerHTML = `
+    <div class="hero"><div style="font-size:44px">⚡</div><h1>Pulse — setup baaki hai</h1>
+      <p>App ban gaya hai, par abhi Supabase se juda nahi hai. 5 minute me connect ho jaayega.</p></div>
+    <div class="card setup">
+      <ol>
+        <li><a href="https://supabase.com" target="_blank">supabase.com</a> pe free project banao.</li>
+        <li>SQL Editor me <code>setup.sql</code> paste karke <b>Run</b> karo.</li>
+        <li>Authentication → Providers me <b>Email</b>, <b>GitHub</b>, <b>Anonymous</b> (aur chaho to Phone) enable karo.</li>
+        <li>Project Settings → API se <b>Project URL</b> aur <b>anon key</b> copy karo.</li>
+        <li>Is file me upar <code>SUPABASE_URL</code> aur <code>SUPABASE_ANON_KEY</code> me paste karo, save karo.</li>
+      </ol>
+      <div class="note">Poori detail <code>SETUP.md</code> me hai. GitHub pe file edit karke bhi ye values daal sakte ho — Pages khud redeploy kar dega.</div>
+    </div>`;
 }
 
 /* ============================================================
-   RENDER
+   ROUTING
    ============================================================ */
+function go(h){ location.hash = h; }
+window.addEventListener("hashchange", ()=>{ render(); });
+function route(){ const h=location.hash.replace(/^#/,"")||"/feed"; return h.split("/").filter(Boolean); }
+
 function render(){
-  const r = route();
+  if(!CONFIGURED) return viewSetup();
   renderHeader();
+  const r=route();
   if(r[0]==="login") return viewLogin();
   if(r[0]==="profile") return viewProfile(r[1]);
   if(r[0]==="post") return viewPost(r[1]);
@@ -278,79 +217,118 @@ function render(){
 }
 
 function renderHeader(){
-  const box = document.getElementById("hauth");
-  if(me){
-    box.innerHTML = `<div style="display:flex;align-items:center;gap:9px">
-      <button class="btn sm ghost" data-go="#/profile/${me.id}">${avatarHTML(me,"sm")}</button>
-      <button class="btn sm" data-act="signout">Sign out</button>
-    </div>`;
+  const box=document.getElementById("hauth");
+  if(user && profile){
+    box.innerHTML=`<div style="display:flex;align-items:center;gap:9px">
+      <button class="btn sm ghost" data-go="#/profile/${user.id}">${avatarHTML(profile,"sm")}</button>
+      <button class="btn sm" data-act="signout">Sign out</button></div>`;
   } else {
-    box.innerHTML = `<button class="btn primary sm" data-go="#/login">Sign in</button>`;
+    box.innerHTML=`<button class="btn primary sm" data-go="#/login">Sign in</button>`;
   }
 }
 
-/* ---------- login view ---------- */
-let loginTab = "github";
+/* ============================================================
+   AUTH
+   ============================================================ */
+let loginTab="github", pending={};
+
 function viewLogin(){
-  const app = document.getElementById("app");
-  const tabBtn = (id,label)=>`<button class="tab ${loginTab===id?"active":""}" data-tab="${id}">${label}</button>`;
-  let form = "";
+  const app=document.getElementById("app");
+  const tab=(id,label)=>`<button class="tab ${loginTab===id?"active":""}" data-tab="${id}">${label}</button>`;
+  let form="";
   if(loginTab==="github"){
-    form = `
-      <label class="f">GitHub username</label>
-      <input id="fHandle" placeholder="e.g. torvalds" value="" />
-      <label class="f">Display name</label>
-      <input id="fName" placeholder="Tumhara naam" />
-      <button class="btn primary block" style="margin-top:16px" data-act="login-github">Continue with GitHub</button>
-      <div class="note">Demo mode: real GitHub OAuth ke liye backend chahiye (neeche guide). Yahan hum ek GitHub-style profile bana dete hain.</div>`;
+    form=`<p class="pmuted" style="margin:0 0 8px">GitHub se ek click me sign in.</p>
+      <button class="btn primary block" data-act="login-github">Continue with GitHub</button>
+      <div class="note">GitHub OAuth Supabase dashboard me enable hona chahiye (SETUP.md dekho).</div>`;
   } else if(loginTab==="email"){
-    form = `
-      <label class="f">Email</label>
-      <input id="fEmail" type="email" placeholder="you@example.com" />
-      <label class="f">Display name</label>
-      <input id="fName" placeholder="Tumhara naam" />
-      <button class="btn primary block" style="margin-top:16px" data-act="login-email">Continue with Email</button>
-      <div class="note">Demo mode: email/OTP verification backend se hoti hai. Yahan turant sign in ho jaata hai.</div>`;
+    form=`
+      <label class="f">Email</label><input id="fEmail" type="email" placeholder="you@example.com" />
+      <button class="btn primary block" style="margin-top:16px" data-act="email-send">Send login code</button>
+      <div id="emailStep2" style="display:none">
+        <label class="f">Email me aaya 6-digit code</label><input id="fCode" inputmode="numeric" placeholder="123456" />
+        <button class="btn primary block" style="margin-top:12px" data-act="email-verify">Verify & sign in</button>
+      </div>`;
   } else if(loginTab==="phone"){
-    form = `
-      <label class="f">Phone number</label>
-      <input id="fPhone" type="tel" placeholder="+91 98765 43210" />
-      <label class="f">Display name</label>
-      <input id="fName" placeholder="Tumhara naam" />
-      <button class="btn primary block" style="margin-top:16px" data-act="login-phone">Continue with Phone</button>
-      <div class="note">Demo mode: real OTP ke liye SMS provider (jaise Twilio/MSG91) chahiye.</div>`;
-  } else {
-    form = `
-      <label class="f">Anonymous display name (optional)</label>
-      <input id="fName" placeholder="khali chhod do to random milega" />
-      <button class="btn primary block" style="margin-top:16px" data-act="login-anon">Create anonymous profile</button>
-      <div class="note">Anonymous profile bhi ek normal profile hai — post, like, comment sab kar sakte ho. Bas naam chhupa rehta hai.</div>`;
-  }
-  app.innerHTML = `
-    <div class="hero">
-      <div style="font-size:44px">⚡</div>
-      <h1>Pulse</h1>
-      <p>Text, photo aur video public me share karo. Profile banao — GitHub, email, phone se, ya anonymous.</p>
-    </div>
-    <div class="card">
-      <div class="tabs">
-        ${tabBtn("github","GitHub")}${tabBtn("email","Email")}${tabBtn("phone","Phone")}${tabBtn("anon","Anonymous")}
+    form=`
+      <label class="f">Phone (with country code)</label><input id="fPhone" type="tel" placeholder="+919876543210" />
+      <button class="btn primary block" style="margin-top:16px" data-act="phone-send">Send OTP</button>
+      <div id="phoneStep2" style="display:none">
+        <label class="f">OTP</label><input id="fOtp" inputmode="numeric" placeholder="123456" />
+        <button class="btn primary block" style="margin-top:12px" data-act="phone-verify">Verify & sign in</button>
       </div>
+      <div class="note">Phone OTP ke liye Supabase me Twilio set karna padta hai (SETUP.md).</div>`;
+  } else {
+    form=`
+      <p class="pmuted" style="margin:0 0 8px">Bina naam ke ek anonymous profile banao. Post, like, comment sab kar sakte ho.</p>
+      <button class="btn primary block" data-act="login-anon">Continue anonymously</button>`;
+  }
+  app.innerHTML=`
+    <div class="hero"><div style="font-size:44px">⚡</div><h1>Pulse</h1>
+      <p>Text, photo aur video public me share karo. Profile banao — GitHub, email, phone se, ya anonymous.</p></div>
+    <div class="card">
+      <div class="tabs">${tab("github","GitHub")}${tab("email","Email")}${tab("phone","Phone")}${tab("anon","Anonymous")}</div>
       ${form}
     </div>
-    <div style="text-align:center;margin-top:6px"><button class="linkbtn" data-go="#/feed">← Feed dekho bina sign in</button></div>
-  `;
+    <div style="text-align:center;margin-top:6px"><button class="linkbtn" data-go="#/feed">← Feed dekho bina sign in</button></div>`;
 }
 
-/* ---------- feed view ---------- */
+async function ensureProfile(){
+  if(!user) return;
+  let { data, error } = await sb.from("profiles").select("*").eq("id", user.id).maybeSingle();
+  if(error){ console.error(error); return; }
+  if(!data){
+    const meta=user.user_metadata||{};
+    const isAnon=!!user.is_anonymous;
+    const base=(meta.user_name||meta.preferred_username||meta.name||"user").toLowerCase().replace(/[^a-z0-9_]/g,"")||"user";
+    const row={ id:user.id, name:isAnon?"Anonymous":(meta.name||meta.full_name||base), handle:base+"_"+user.id.slice(0,4), is_anonymous:isAnon };
+    if(isAnon) row.emoji="🕶️";
+    const ins=await sb.from("profiles").insert(row).select().single();
+    data=ins.data;
+  } else if(user.is_anonymous && (!data.name || data.name==="User")){
+    const tag=anonTag();
+    const upd=await sb.from("profiles").update({ name:"Anonymous", is_anonymous:true, emoji:data.emoji||"🕶️", handle:"anon"+tag.split("#")[1].trim() }).eq("id",user.id).select().single();
+    if(upd.data) data=upd.data;
+  }
+  profile=data;
+}
+
+async function afterAuth(){
+  await ensureProfile();
+  render();
+  loadFeed();
+}
+function signOut(){ sb.auth.signOut().then(()=>{ user=null; profile=null; toast("Signed out"); go("/feed"); render(); }); }
+
+/* ============================================================
+   FEED / DATA
+   ============================================================ */
+async function loadMyLikes(){
+  myLikes=new Set();
+  if(!user) return;
+  const { data } = await sb.from("likes").select("post_id").eq("user_id", user.id);
+  (data||[]).forEach(l=>myLikes.add(l.post_id));
+}
+const POST_SELECT = `id, type, text, media_url, created_at,
+  author:profiles!posts_author_fkey(id, name, handle, emoji, is_anonymous),
+  likes(count), comments(count)`;
+
+async function loadFeed(){
+  if(!CONFIGURED) return;
+  await loadMyLikes();
+  const { data, error } = await sb.from("posts").select(POST_SELECT).order("created_at",{ascending:false}).limit(60);
+  if(error){ console.error(error); toast("Feed load nahi hua"); return; }
+  posts=data||[];
+  render();
+}
+
 function viewFeed(){
-  const app = document.getElementById("app");
-  let html = "";
-  if(me){
-    html += `
+  const app=document.getElementById("app");
+  let html="";
+  if(user && profile){
+    html+=`
       <div class="card composer">
         <div style="display:flex;gap:11px;align-items:flex-start">
-          ${avatarHTML(me)}
+          ${avatarHTML(profile)}
           <div style="flex:1">
             <div class="ctabs">
               <button class="chip active" data-ctype="text">📝 Text</button>
@@ -360,310 +338,311 @@ function viewFeed(){
             <textarea id="cText" placeholder="Kya soch rahe ho?"></textarea>
             <div class="preview" id="cPreview"></div>
             <div class="crow">
-              <label class="file-btn" id="cFileLabel">📎 <span id="cFileText">Attach photo</span>
-                <input type="file" id="cFile" />
-              </label>
-              <div class="hspacer" style="flex:1"></div>
+              <label class="file-btn">📎 <span id="cFileText">Attach photo</span>
+                <input type="file" id="cFile" /></label>
+              <div style="flex:1"></div>
               <button class="btn primary" data-act="post">Post karo</button>
             </div>
           </div>
         </div>
       </div>`;
   } else {
-    html += `<div class="card" style="text-align:center">
+    html+=`<div class="card" style="text-align:center">
       <b>Post karne, like, comment ke liye sign in karo</b>
       <p class="pmuted" style="margin:6px 0 12px">GitHub, email, phone ya anonymous — koi bhi.</p>
-      <button class="btn primary" data-go="#/login">Sign in / Create profile</button>
-    </div>`;
+      <button class="btn primary" data-go="#/login">Sign in / Create profile</button></div>`;
   }
-  if(!posts.length){
-    html += `<div class="empty"><div class="big">🌱</div>Abhi koi post nahi. Pehla post tum karo!</div>`;
-  } else {
-    posts.forEach(p=>{ html += postHTML(p); });
-  }
-  app.innerHTML = html;
-  if(me) wireComposer();
-  hydrateMedia();
+  html += posts.length ? posts.map(p=>postHTML(p)).join("")
+        : `<div class="empty"><div class="big">🌱</div>Abhi koi post nahi. Pehla post tum karo!</div>`;
+  app.innerHTML=html;
+  if(user && profile) wireComposer();
 }
 
-/* ---------- single post view ---------- */
 function viewPost(id){
-  const app = document.getElementById("app");
-  const p = posts.find(x=>x.id===id);
-  app.innerHTML = `<button class="back" data-go="#/feed">← Feed</button>` +
-    (p ? postHTML(p, true) : `<div class="empty">Post mila nahi.</div>`);
-  if(p) { const c = document.querySelector(".comments"); if(c) c.classList.add("open"); }
-  hydrateMedia();
+  const app=document.getElementById("app");
+  const p=posts.find(x=>x.id===id);
+  app.innerHTML=`<button class="back" data-go="#/feed">← Feed</button>`+(p?postHTML(p):`<div class="empty">Post mila nahi.</div>`);
+  if(p){ const c=document.querySelector(".comments"); if(c){ c.classList.add("open"); loadComments(p.id); } }
 }
 
-/* ---------- profile view ---------- */
 function viewProfile(id){
-  const app = document.getElementById("app");
-  const u = users[id];
-  if(!u){ app.innerHTML = `<button class="back" data-go="#/feed">← Feed</button><div class="empty">Profile mila nahi.</div>`; return; }
-  const mine = posts.filter(p=>p.author===id);
-  const likesGot = mine.reduce((a,p)=>a+(p.likes?p.likes.length:0),0);
-  const isMe = me && me.id===id;
-  const nameLine = u.anon ? `Anonymous <span class="badge">${esc(u.anonTag||"anon")}</span>` : esc(u.name);
-  app.innerHTML = `
-    <button class="back" data-go="#/feed">← Feed</button>
-    <div class="card" style="padding:0;overflow:hidden">
-      <div class="pcover"></div>
-      <div class="pcard">
-        <div class="pmeta">
-          <div style="display:flex;align-items:flex-end;gap:12px">
-            ${avatarHTML(u,"lg")}
-            <div>
-              <div class="pname" style="font-size:18px">${nameLine}</div>
-              <div class="pmuted">@${esc(u.handle||"user")} · ${esc(u.provider||"user")}</div>
+  const app=document.getElementById("app");
+  if(!id){ app.innerHTML=`<div class="empty">Profile mila nahi.</div>`; return; }
+  app.innerHTML=`<button class="back" data-go="#/feed">← Feed</button><div class="empty">Loading…</div>`;
+  (async ()=>{
+    const { data:u } = await sb.from("profiles").select("*").eq("id",id).maybeSingle();
+    if(!u){ app.innerHTML=`<button class="back" data-go="#/feed">← Feed</button><div class="empty">Profile mila nahi.</div>`; return; }
+    const { data:mine } = await sb.from("posts").select(POST_SELECT).eq("author",id).order("created_at",{ascending:false}).limit(60);
+    const list=mine||[];
+    const likesGot=list.reduce((a,p)=>a+(p.likes?.[0]?.count||0),0);
+    const isMe=user && user.id===id;
+    const nameLine=u.is_anonymous?`Anonymous <span class="badge">${esc(u.handle||"anon")}</span>`:esc(u.name);
+    app.innerHTML=`
+      <button class="back" data-go="#/feed">← Feed</button>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="pcover"></div>
+        <div class="pcard">
+          <div class="pmeta">
+            <div style="display:flex;align-items:flex-end;gap:12px">
+              ${avatarHTML(u,"lg")}
+              <div><div class="pname" style="font-size:18px">${nameLine}</div>
+                <div class="pmuted">@${esc(u.handle||"user")}</div></div>
             </div>
+            ${isMe?`<button class="btn sm" data-act="edit-profile">Edit</button>`:""}
           </div>
-          ${isMe?`<button class="btn sm" data-act="edit-profile">Edit</button>`:""}
-        </div>
-        ${u.bio?`<p style="margin:12px 0 0;font-size:14.5px">${esc(u.bio)}</p>`:""}
-        <div class="pstats">
-          <div><b>${mine.length}</b>posts</div>
-          <div><b>${likesGot}</b>likes</div>
+          ${u.bio?`<p style="margin:12px 0 0;font-size:14.5px">${esc(u.bio)}</p>`:""}
+          <div class="pstats"><div><b>${list.length}</b>posts</div><div><b>${likesGot}</b>likes</div></div>
         </div>
       </div>
-    </div>
-    <div class="tabsline"><button class="active">Posts</button></div>
-    ${mine.length ? mine.map(p=>postHTML(p)).join("") : `<div class="empty"><div class="big">📭</div>Koi post nahi.</div>`}
-  `;
-  hydrateMedia();
+      <div class="tabsline"><button class="active">Posts</button></div>
+      ${list.length?list.map(p=>postHTML(p)).join(""):`<div class="empty"><div class="big">📭</div>Koi post nahi.</div>`}`;
+  })();
 }
 
-/* ---------- post card HTML ---------- */
-function postHTML(p, detail){
-  const u = users[p.author] || {id:p.author,name:"Unknown",handle:"unknown"};
-  const liked = me && p.likes && p.likes.includes(me.id);
-  const likeCount = p.likes?p.likes.length:0;
-  const cc = p.comments?p.comments.length:0;
-  const nameHTML = u.anon
-    ? `Anonymous <span class="badge">${esc(u.anonTag||"anon")}</span>`
-    : esc(u.name);
-  const del = (me && me.id===p.author) ? `<button class="act" data-act="delete" data-id="${p.id}" title="Delete">🗑️</button>` : "";
+function postHTML(p){
+  const u=p.author||{id:"?",name:"Unknown",handle:"unknown"};
+  const liked=myLikes.has(p.id);
+  const likeCount=p.likes?.[0]?.count||0;
+  const cc=p.comments?.[0]?.count||0;
+  const nameHTML=u.is_anonymous?`Anonymous <span class="badge">${esc(u.handle||"anon")}</span>`:esc(u.name);
+  const del=(user && user.id===u.id)?`<button class="act" data-act="delete" data-id="${p.id}" title="Delete">🗑️</button>`:"";
+  const media = p.media_url
+    ? `<div class="post-media">${p.type==="video"
+        ?`<video src="${esc(p.media_url)}" controls playsinline preload="metadata"></video>`
+        :`<img src="${esc(p.media_url)}" alt="post media" loading="lazy" />`}</div>`
+    : "";
   return `
   <div class="card post" data-post="${p.id}">
     <div class="post-head">
       <button data-go="#/profile/${u.id}" style="border:none;background:none;padding:0">${avatarHTML(u)}</button>
       <div style="flex:1">
-        <div class="pname">
-          <button data-go="#/profile/${u.id}" style="border:none;background:none;padding:0;color:inherit;font:inherit">${nameHTML}</button>
-        </div>
-        <div class="pmuted">@${esc(u.handle||"user")} · ${timeAgo(p.createdAt)}</div>
-      </div>
-      ${del}
+        <div class="pname"><button data-go="#/profile/${u.id}" style="border:none;background:none;padding:0;color:inherit;font:inherit">${nameHTML}</button></div>
+        <div class="pmuted">@${esc(u.handle||"user")} · ${timeAgo(p.created_at)}</div>
+      </div>${del}
     </div>
     ${p.text?`<div class="post-body">${esc(p.text)}</div>`:""}
-    ${p.mediaId?`<div class="post-media" data-media="${p.mediaId}" data-kind="${esc(p.type)}"></div>`:""}
+    ${media}
     <div class="actions">
-      <button class="act ${liked?"liked":""}" data-act="like" data-id="${p.id}">
-        ${liked?"❤️":"🤍"} <span>${likeCount}</span>
-      </button>
+      <button class="act ${liked?"liked":""}" data-act="like" data-id="${p.id}">${liked?"❤️":"🤍"} <span>${likeCount}</span></button>
       <button class="act" data-act="toggle-comments" data-id="${p.id}">💬 <span>${cc}</span></button>
       <button class="act" data-act="share" data-id="${p.id}">🔗 Share</button>
       <div style="flex:1"></div>
       <button class="act" data-go="#/post/${p.id}">Open</button>
     </div>
     <div class="comments" data-comments="${p.id}">
-      ${commentsHTML(p)}
-      ${me?`<div class="cform">
+      <div class="clist"></div>
+      ${user?`<div class="cform">
         <input placeholder="Comment likho..." data-cinput="${p.id}" />
-        <button class="btn primary sm" data-act="comment" data-id="${p.id}">Send</button>
-      </div>`:``}
+        <button class="btn primary sm" data-act="comment" data-id="${p.id}">Send</button></div>`:``}
     </div>
   </div>`;
 }
-function commentsHTML(p){
-  if(!p.comments || !p.comments.length) return `<div class="pmuted" style="margin-bottom:8px">Koi comment nahi. Pehla comment tum karo.</div>`;
-  return p.comments.map(c=>{
-    const u = users[c.author] || {id:c.author,name:"Unknown"};
-    const n = u.anon ? `Anonymous <span class="badge">${esc(u.anonTag||"anon")}</span>` : esc(u.name);
+
+async function loadComments(postId){
+  const box=document.querySelector(`[data-comments="${postId}"] .clist`);
+  if(!box) return;
+  const { data } = await sb.from("comments")
+    .select("id, text, created_at, author:profiles!comments_author_fkey(id,name,handle,emoji,is_anonymous)")
+    .eq("post_id",postId).order("created_at",{ascending:true}).limit(100);
+  const list=data||[];
+  box.innerHTML = list.length ? list.map(c=>{
+    const u=c.author||{id:"?",name:"Unknown"};
+    const n=u.is_anonymous?`Anonymous <span class="badge">${esc(u.handle||"anon")}</span>`:esc(u.name);
     return `<div class="citem">
       <button data-go="#/profile/${u.id}" style="border:none;background:none;padding:0">${avatarHTML(u,"sm")}</button>
-      <div class="cbubble"><div class="n">${n}</div><div class="t">${esc(c.text)}</div></div>
-    </div>`;
-  }).join("");
-}
-
-/* ---------- hydrate media blobs ---------- */
-async function hydrateMedia(){
-  const nodes = document.querySelectorAll("[data-media]");
-  for(const n of nodes){
-    const id = n.getAttribute("data-media");
-    const kind = n.getAttribute("data-kind");
-    const url = await getMediaURL(id);
-    if(!url) continue;
-    n.innerHTML = kind==="video"
-      ? `<video src="${url}" controls playsinline preload="metadata"></video>`
-      : `<img src="${url}" alt="post media" loading="lazy" />`;
-  }
+      <div class="cbubble"><div class="n">${n}</div><div class="t">${esc(c.text)}</div></div></div>`;
+  }).join("") : `<div class="pmuted" style="margin-bottom:8px">Koi comment nahi. Pehla comment tum karo.</div>`;
 }
 
 /* ============================================================
    COMPOSER
    ============================================================ */
-let cType = "text", cPendingBlob = null;
+let cType="text", cPending=null;
 function wireComposer(){
   document.querySelectorAll("[data-ctype]").forEach(b=>{
-    b.onclick = ()=>{
-      cType = b.getAttribute("data-ctype");
-      document.querySelectorAll("[data-ctype]").forEach(x=>x.classList.toggle("active", x===b));
-      const lbl = document.getElementById("cFileText");
-      const inp = document.getElementById("cFile");
+    b.onclick=()=>{
+      cType=b.getAttribute("data-ctype");
+      document.querySelectorAll("[data-ctype]").forEach(x=>x.classList.toggle("active",x===b));
+      const lbl=document.getElementById("cFileText"), inp=document.getElementById("cFile");
       if(cType==="photo"){ lbl.textContent="Attach photo"; inp.accept="image/*"; }
       else if(cType==="video"){ lbl.textContent="Attach video"; inp.accept="video/*"; }
       else { lbl.textContent="Attach photo"; inp.accept="image/*"; }
       clearPreview();
     };
   });
-  const file = document.getElementById("cFile");
-  file.onchange = ()=>{
-    const f = file.files[0]; if(!f) return;
-    cPendingBlob = f;
-    const url = URL.createObjectURL(f);
-    const prev = document.getElementById("cPreview");
+  const file=document.getElementById("cFile");
+  file.onchange=()=>{
+    const f=file.files[0]; if(!f) return;
+    if(f.size>50*1024*1024){ toast("File 50 MB se badi hai"); file.value=""; return; }
+    cPending=f;
+    const url=URL.createObjectURL(f);
+    const prev=document.getElementById("cPreview");
     prev.style.display="block";
-    prev.innerHTML = `<button class="x" id="cClear">×</button>` +
-      (f.type.startsWith("video")?`<video src="${url}" controls></video>`:`<img src="${url}" />`);
-    document.getElementById("cClear").onclick = ()=>{ clearPreview(); file.value=""; };
+    prev.innerHTML=`<button class="x" id="cClear">×</button>`+(f.type.startsWith("video")?`<video src="${url}" controls></video>`:`<img src="${url}" />`);
+    document.getElementById("cClear").onclick=()=>{ clearPreview(); file.value=""; };
   };
 }
-function clearPreview(){
-  cPendingBlob = null;
-  const prev = document.getElementById("cPreview");
-  if(prev){ prev.style.display="none"; prev.innerHTML=""; }
-}
+function clearPreview(){ cPending=null; const p=document.getElementById("cPreview"); if(p){ p.style.display="none"; p.innerHTML=""; } }
+
 async function createPost(){
-  if(!me){ toast("Pehle sign in karo"); go("/login"); render(); return; }
-  const text = (document.getElementById("cText").value || "").trim();
-  let mediaId = null;
-  if(cPendingBlob){
-    mediaId = uid();
-    await dbPut("media", cPendingBlob, mediaId);
+  if(!user){ toast("Pehle sign in karo"); go("/login"); render(); return; }
+  const text=(document.getElementById("cText").value||"").trim();
+  if(!text && !cPending){ toast("Kuch likho ya photo/video lagao"); return; }
+  let media_url=null, media_path=null, type="text";
+  if(cPending){
+    type=cPending.type.startsWith("video")?"video":"photo";
+    const ext=(cPending.name.split(".").pop()||"bin").toLowerCase().slice(0,5);
+    media_path=`${user.id}/${crypto.randomUUID()}.${ext}`;
+    toast("Upload ho raha hai…");
+    const up=await sb.storage.from("media").upload(media_path, cPending, {cacheControl:"3600", upsert:false});
+    if(up.error){ console.error(up.error); toast("Upload fail: "+up.error.message); return; }
+    media_url=sb.storage.from("media").getPublicUrl(media_path).data.publicUrl;
   }
-  if(!text && !mediaId){ toast("Kuch likho ya photo/video lagao"); return; }
-  const type = mediaId ? (cPendingBlob.type.startsWith("video")?"video":"photo") : "text";
-  const post = {id:uid(), author:me.id, type, text, mediaId, likes:[], comments:[], createdAt:Date.now()};
-  await dbPut("posts", post);
-  posts.unshift(post);
+  const { error }=await sb.from("posts").insert({ author:user.id, type, text, media_url, media_path });
+  if(error){ console.error(error); toast("Post fail: "+error.message); return; }
+  clearPreview();
   toast("Posted! 🎉");
-  go("/feed"); render();
+  go("/feed");
+  await loadFeed();
 }
 
 /* ============================================================
-   ACTIONS (event delegation)
+   EVENT DELEGATION
    ============================================================ */
 document.addEventListener("click", async (e)=>{
-  const goEl = e.target.closest("[data-go]");
-  if(goEl){ go(goEl.getAttribute("data-go")); return; }
-  const tabEl = e.target.closest("[data-tab]");
-  if(tabEl){ loginTab = tabEl.getAttribute("data-tab"); viewLogin(); return; }
-  const actEl = e.target.closest("[data-act]");
-  if(!actEl) return;
-  const act = actEl.getAttribute("data-act");
-  const id = actEl.getAttribute("data-id");
+  const goEl=e.target.closest("[data-go]"); if(goEl){ go(goEl.getAttribute("data-go")); return; }
+  const tabEl=e.target.closest("[data-tab]"); if(tabEl){ loginTab=tabEl.getAttribute("data-tab"); viewLogin(); return; }
+  const actEl=e.target.closest("[data-act]"); if(!actEl) return;
+  const act=actEl.getAttribute("data-act"), id=actEl.getAttribute("data-id");
 
   if(act==="signout") return signOut();
 
   if(act==="login-github"){
-    const handle = (document.getElementById("fHandle").value||"").trim() || ("user"+Math.floor(Math.random()*9000));
-    const name = (document.getElementById("fName").value||"").trim() || handle;
-    return signIn({id:uid(), name, handle, provider:"github", bio:"", emoji:""});
+    const { error }=await sb.auth.signInWithOAuth({ provider:"github", options:{ redirectTo: location.href.split("#")[0] } });
+    if(error) toast(error.message);
+    return;
   }
-  if(act==="login-email"){
-    const email = (document.getElementById("fEmail").value||"").trim();
-    if(!email || !email.includes("@")) return toast("Sahi email daalo");
-    const name = (document.getElementById("fName").value||"").trim() || email.split("@")[0];
-    return signIn({id:uid(), name, handle:email.split("@")[0], provider:"email", email, bio:"", emoji:""});
+  if(act==="email-send"){
+    const email=(document.getElementById("fEmail").value||"").trim();
+    if(!email.includes("@")) return toast("Sahi email daalo");
+    const { error }=await sb.auth.signInWithOtp({ email, options:{ shouldCreateUser:true } });
+    if(error) return toast(error.message);
+    pending.email=email;
+    document.getElementById("emailStep2").style.display="block";
+    toast("Code email ho gaya ✉️");
+    return;
   }
-  if(act==="login-phone"){
-    const phone = (document.getElementById("fPhone").value||"").trim();
-    if(phone.replace(/\D/g,"").length < 8) return toast("Sahi phone number daalo");
-    const name = (document.getElementById("fName").value||"").trim() || "User "+phone.slice(-4);
-    return signIn({id:uid(), name, handle:"user"+phone.slice(-4), provider:"phone", phone, bio:"", emoji:""});
+  if(act==="email-verify"){
+    const token=(document.getElementById("fCode").value||"").trim();
+    const { error }=await sb.auth.verifyOtp({ email:pending.email, token, type:"email" });
+    if(error) return toast(error.message);
+    return;
+  }
+  if(act==="phone-send"){
+    const phone=(document.getElementById("fPhone").value||"").trim();
+    if(phone.length<8) return toast("Sahi number daalo");
+    const { error }=await sb.auth.signInWithOtp({ phone });
+    if(error) return toast(error.message);
+    pending.phone=phone;
+    document.getElementById("phoneStep2").style.display="block";
+    toast("OTP bhej diya 📱");
+    return;
+  }
+  if(act==="phone-verify"){
+    const token=(document.getElementById("fOtp").value||"").trim();
+    const { error }=await sb.auth.verifyOtp({ phone:pending.phone, token, type:"sms" });
+    if(error) return toast(error.message);
+    return;
   }
   if(act==="login-anon"){
-    const name = (document.getElementById("fName").value||"").trim() || "Anonymous";
-    const tag = anonTag();
-    return signIn({id:uid(), name, handle:"anon"+tag.split("#")[1].trim(), provider:"anon", anon:true, anonTag:tag, bio:"", emoji:"🕶️"});
+    const { error }=await sb.auth.signInAnonymously();
+    if(error) return toast("Anonymous login band hai — Supabase me enable karo");
+    return;
   }
 
   if(act==="post") return createPost();
 
   if(act==="like"){
-    if(!me){ toast("Like karne ke liye sign in karo"); return go("/login"), render(); }
-    const p = posts.find(x=>x.id===id); if(!p) return;
-    p.likes = p.likes||[];
-    const i = p.likes.indexOf(me.id);
-    if(i>=0) p.likes.splice(i,1); else p.likes.push(me.id);
-    await dbPut("posts", p); render();
+    if(!user){ toast("Like karne ke liye sign in karo"); go("/login"); render(); return; }
+    const liked=myLikes.has(id);
+    if(liked){
+      myLikes.delete(id);
+      await sb.from("likes").delete().eq("post_id",id).eq("user_id",user.id);
+    } else {
+      myLikes.add(id);
+      await sb.from("likes").insert({ post_id:id, user_id:user.id });
+    }
+    await loadFeed();
     return;
   }
   if(act==="toggle-comments"){
-    const box = document.querySelector(`[data-comments="${id}"]`);
-    if(box) box.classList.toggle("open");
+    const box=document.querySelector(`[data-comments="${id}"]`);
+    if(!box) return;
+    const open=box.classList.toggle("open");
+    if(open) loadComments(id);
     return;
   }
   if(act==="comment"){
-    if(!me){ toast("Comment ke liye sign in karo"); return go("/login"), render(); }
-    const input = document.querySelector(`[data-cinput="${id}"]`);
-    const text = (input.value||"").trim();
-    if(!text) return;
-    const p = posts.find(x=>x.id===id); if(!p) return;
-    p.comments = p.comments||[];
-    p.comments.push({id:uid(), author:me.id, text, createdAt:Date.now()});
-    await dbPut("posts", p); render();
-    const box = document.querySelector(`[data-comments="${id}"]`); if(box) box.classList.add("open");
+    if(!user){ toast("Comment ke liye sign in karo"); go("/login"); render(); return; }
+    const input=document.querySelector(`[data-cinput="${id}"]`);
+    const text=(input.value||"").trim(); if(!text) return;
+    const { error }=await sb.from("comments").insert({ post_id:id, author:user.id, text });
+    if(error) return toast(error.message);
+    input.value="";
+    const p=posts.find(x=>x.id===id);
+    if(p && p.comments && p.comments[0]) p.comments[0].count++;
+    const box=document.querySelector(`[data-comments="${id}"]`);
+    if(box){ box.classList.add("open"); }
+    loadComments(id);
     return;
   }
   if(act==="share"){
-    const link = location.href.split("#")[0] + "#/post/" + id;
+    const link=location.href.split("#")[0]+"#/post/"+id;
     try{
-      if(navigator.share){ await navigator.share({title:"Pulse post", text:"Ye post dekho", url:link}); }
+      if(navigator.share) await navigator.share({title:"Pulse post", text:"Ye post dekho", url:link});
       else { await navigator.clipboard.writeText(link); toast("Link copied! 🔗"); }
-    }catch(err){ toast("Share cancel"); }
+    }catch(err){}
     return;
   }
   if(act==="delete"){
-    if(!me) return;
-    const p = posts.find(x=>x.id===id); if(!p || p.author!==me.id) return;
+    if(!user) return;
     if(!confirm("Ye post delete karein?")) return;
-    if(p.mediaId){ try{ await dbDel("media", p.mediaId); }catch(e){} }
-    await dbDel("posts", id);
-    posts = posts.filter(x=>x.id!==id);
-    toast("Post delete ho gaya"); render();
+    const p=posts.find(x=>x.id===id);
+    if(p && p.media_path){ try{ await sb.storage.from("media").remove([p.media_path]); }catch(e){} }
+    const { error }=await sb.from("posts").delete().eq("id",id);
+    if(error) return toast(error.message);
+    toast("Post delete ho gaya"); await loadFeed();
     return;
   }
   if(act==="edit-profile") return openEdit();
-
-  // comment: Enter key support handled below via keydown
 });
 
 document.addEventListener("keydown", (e)=>{
   if(e.key==="Enter" && e.target.matches("[data-cinput]")){
     e.preventDefault();
-    const id = e.target.getAttribute("data-cinput");
+    const id=e.target.getAttribute("data-cinput");
     document.querySelector(`[data-act="comment"][data-id="${id}"]`).click();
   }
 });
 
-/* ---------- edit profile modal ---------- */
 function openEdit(){
-  if(!me) return;
-  document.getElementById("edName").value = me.name||"";
-  document.getElementById("edBio").value = me.bio||"";
-  document.getElementById("edEmoji").value = me.emoji||"";
+  if(!profile) return;
+  document.getElementById("edName").value=profile.name||"";
+  document.getElementById("edBio").value=profile.bio||"";
+  document.getElementById("edEmoji").value=profile.emoji||"";
   document.getElementById("editModal").classList.add("show");
 }
-document.getElementById("edCancel").onclick = ()=>document.getElementById("editModal").classList.remove("show");
-document.getElementById("edSave").onclick = async ()=>{
-  me.name = (document.getElementById("edName").value||"").trim() || me.name;
-  me.bio = (document.getElementById("edBio").value||"").trim();
-  me.emoji = (document.getElementById("edEmoji").value||"").trim();
-  await dbPut("users", me); users[me.id]=me;
-  document.getElementById("editModal").classList.remove("show");
+document.getElementById("edCancel").onclick=()=>document.getElementById("editModal").classList.remove("show");
+document.getElementById("edSave").onclick=async ()=>{
+  if(!profile) return;
+  const patch={
+    name:(document.getElementById("edName").value||"").trim()||profile.name,
+    bio:(document.getElementById("edBio").value||"").trim(),
+    emoji:(document.getElementById("edEmoji").value||"").trim()
+  };
+  const { data, error }=await sb.from("profiles").update(patch).eq("id",profile.id).select().single();
+  if(error) return toast(error.message);
+  profile=data; document.getElementById("editModal").classList.remove("show");
   toast("Profile update ho gaya"); render();
 };
 
@@ -671,12 +650,16 @@ document.getElementById("edSave").onclick = async ()=>{
    BOOT
    ============================================================ */
 (async function boot(){
-  await openDB();
-  await seedIfEmpty();
-  await loadAll();
-  const sid = localStorage.getItem("pulse_session");
-  if(sid && users[sid]) me = users[sid];
+  if(!CONFIGURED){ viewSetup(); return; }
+  const { data:{ session } }=await sb.auth.getSession();
+  user=session?session.user:null;
+  if(user) await ensureProfile();
   render();
+  if(user) loadFeed();
+  sb.auth.onAuthStateChange(async (event, s)=>{
+    if(event==="SIGNED_IN" && s && (!user || user.id!==s.user.id)){ user=s.user; await afterAuth(); }
+    if(event==="SIGNED_OUT"){ user=null; profile=null; render(); }
+  });
 })();
 </script>
 </body>
