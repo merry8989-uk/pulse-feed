@@ -105,7 +105,7 @@
 <body>
 <header>
   <div class="hrow">
-    <div class="logo"><span class="dot">⚡</span> Pulse</div>
+    <a class="logo" href="#/feed" data-go="#/feed" style="color:inherit" aria-label="Pulse home"><span class="dot">⚡</span> Pulse</a>
     <div class="hspacer"></div>
     <div id="hauth"></div>
   </div>
@@ -202,7 +202,7 @@ function viewSetup(){
 /* ============================================================
    ROUTING
    ============================================================ */
-function go(h){ location.hash = h; }
+function go(h){ if(location.hash===h){ render(); } else { location.hash = h; } window.scrollTo({top:0}); }
 window.addEventListener("hashchange", ()=>{ render(); });
 function route(){ const h=location.hash.replace(/^#/,"")||"/feed"; return h.split("/").filter(Boolean); }
 
