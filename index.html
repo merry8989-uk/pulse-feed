@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pulse — post karo, dekho, like karo</title>
+<style>
+  :root{
+    --bg:#0e1014; --bg2:#14171d; --card:#181b22; --card2:#1f232c;
+    --text:#e9ecf3; --muted:#8b93a7; --border:#272c37;
+    --accent:#7c5cff; --accent-soft:#2a2350; --green:#22c55e; --pink:#ec4899; --danger:#ef4444;
+    --radius:16px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:radial-gradient(1200px 600px at 50% -200px, #1b1740 0%, var(--bg) 60%);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    min-height:100vh; line-height:1.5;
+  }
+  a{color:var(--accent);text-decoration:none}
+  button{font-family:inherit;cursor:pointer}
+  .wrap{max-width:640px;margin:0 auto;padding:0 14px 90px}
+  /* header */
+  header{
+    position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);
+    background:rgba(14,16,20,.78);border-bottom:1px solid var(--border);
+  }
+  .hrow{max-width:640px;margin:0 auto;padding:12px 14px;display:flex;align-items:center;gap:12px}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:800;font-size:20px;letter-spacing:-.3px}
+  .logo .dot{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--pink));display:grid;place-items:center;font-size:15px}
+  .hspacer{flex:1}
+  .avatar{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;flex:0 0 auto;font-size:15px;border:1px solid rgba(255,255,255,.08)}
+  .avatar.lg{width:64px;height:64px;font-size:24px}
+  .avatar.sm{width:30px;height:30px;font-size:12px}
+  /* buttons */
+  .btn{border:1px solid var(--border);background:var(--card2);color:var(--text);padding:9px 14px;border-radius:11px;font-weight:600;font-size:14px;transition:.15s}
+  .btn:hover{background:#262b36;border-color:#39404e}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:#6a4bf0}
+  .btn.ghost{background:transparent}
+  .btn.sm{padding:6px 11px;font-size:13px;border-radius:9px}
+  .btn.block{width:100%;justify-content:center;display:flex;padding:12px}
+  .btn[disabled]{opacity:.5;cursor:not-allowed}
+  /* cards */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:14px 0}
+  /* login */
+  .hero{text-align:center;padding:34px 8px 6px}
+  .hero h1{font-size:30px;margin:14px 0 6px;letter-spacing:-.6px}
+  .hero p{color:var(--muted);margin:0 auto;max-width:420px}
+  .tabs{display:flex;gap:6px;background:var(--bg2);border:1px solid var(--border);padding:5px;border-radius:12px;margin:16px 0}
+  .tab{flex:1;text-align:center;padding:9px;border-radius:9px;font-size:13px;font-weight:600;color:var(--muted);border:none;background:transparent}
+  .tab.active{background:var(--card2);color:var(--text)}
+  label.f{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px;font-weight:600}
+  input,textarea,select{
+    width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);
+    padding:11px 13px;border-radius:11px;font-size:15px;font-family:inherit;outline:none;
+  }
+  input:focus,textarea:focus{border-color:var(--accent)}
+  textarea{resize:vertical;min-height:74px}
+  /* composer */
+  .composer .ctabs{display:flex;gap:8px;margin-bottom:10px}
+  .chip{padding:7px 13px;border-radius:20px;border:1px solid var(--border);background:var(--bg2);color:var(--muted);font-size:13px;font-weight:600}
+  .chip.active{background:var(--accent-soft);border-color:var(--accent);color:#c9bcff}
+  .preview{margin-top:10px;position:relative;border-radius:12px;overflow:hidden;border:1px solid var(--border);display:none}
+  .preview img,.preview video{width:100%;display:block;max-height:360px;object-fit:cover;background:#000}
+  .preview .x{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.65);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:16px}
+  .crow{display:flex;align-items:center;gap:10px;margin-top:12px}
+  .file-btn{display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border:1px dashed var(--border);border-radius:11px;color:var(--muted);font-size:13px;font-weight:600;background:var(--bg2)}
+  .file-btn:hover{border-color:var(--accent);color:#c9bcff}
+  input[type=file]{display:none}
+  /* post */
+  .post-head{display:flex;gap:11px;align-items:flex-start}
+  .pname{font-weight:700;font-size:15px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .pmuted{color:var(--muted);font-size:13px}
+  .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--accent-soft);color:#c9bcff;border:1px solid #3a3070}
+  .post-body{margin:12px 0 0;white-space:pre-wrap;word-wrap:break-word;font-size:15.5px}
+  .post-media{margin-top:12px;border-radius:13px;overflow:hidden;border:1px solid var(--border);background:#000}
+  .post-media img,.post-media video{width:100%;display:block;max-height:520px;object-fit:contain;background:#000}
+  .actions{display:flex;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+  .act{display:flex;align-items:center;gap:6px;background:transparent;border:none;color:var(--muted);font-size:13.5px;font-weight:600;padding:7px 11px;border-radius:10px;transition:.15s}
+  .act:hover{background:var(--card2);color:var(--text)}
+  .act.liked{color:var(--pink)}
+  .act svg{width:18px;height:18px}
+  .comments{margin-top:10px;border-top:1px solid var(--border);padding-top:12px;display:none}
+  .comments.open{display:block}
+  .citem{display:flex;gap:9px;margin-bottom:10px}
+  .cbubble{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:8px 12px;flex:1}
+  .cbubble .n{font-weight:700;font-size:13px}
+  .cbubble .t{font-size:14px;white-space:pre-wrap;word-wrap:break-word}
+  .cform{display:flex;gap:8px;margin-top:6px}
+  .cform input{flex:1}
+  .empty{text-align:center;color:var(--muted);padding:40px 10px}
+  .empty .big{font-size:40px;margin-bottom:8px}
+  /* profile */
+  .pcover{height:96px;border-radius:16px 16px 0 0;background:linear-gradient(120deg,#7c5cff,#ec4899)}
+  .pcard{margin-top:-40px;padding:0 16px 16px}
+  .pmeta{display:flex;justify-content:space-between;align-items:flex-end;gap:10px}
+  .pstats{display:flex;gap:18px;margin-top:14px;color:var(--muted);font-size:13.5px}
+  .pstats b{color:var(--text);font-size:16px;display:block}
+  .tabsline{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:16px 0 0}
+  .tabsline button{background:transparent;border:none;color:var(--muted);padding:11px 14px;font-weight:600;font-size:14px;border-bottom:2px solid transparent}
+  .tabsline button.active{color:var(--text);border-bottom-color:var(--accent)}
+  /* misc */
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#20242e;border:1px solid var(--border);color:var(--text);padding:11px 18px;border-radius:12px;font-size:14px;font-weight:600;opacity:0;transition:.25s;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.4);max-width:90vw;text-align:center}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;place-items:center;z-index:150;padding:16px}
+  .modal.show{display:grid}
+  .modal .box{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:20px;width:100%;max-width:400px}
+  .note{font-size:12.5px;color:var(--muted);background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;margin-top:12px}
+  .linkbtn{background:none;border:none;color:var(--accent);font-weight:600;font-size:13.5px;padding:0}
+  .back{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-weight:600;font-size:14px;margin:14px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <div class="hrow">
+    <div class="logo"><span class="dot">⚡</span> Pulse</div>
+    <div class="hspacer"></div>
+    <div id="hauth"></div>
+  </div>
+</header>
+<main id="app" class="wrap"></main>
+<div class="toast" id="toast"></div>
+
+<!-- profile edit modal -->
+<div class="modal" id="editModal">
+  <div class="box">
+    <h3 style="margin:0 0 4px">Edit profile</h3>
+    <p class="pmuted" style="margin:0 0 6px">Ye demo profile hai — naam aur bio badal sakte ho.</p>
+    <label class="f">Display name</label>
+    <input id="edName" maxlength="40" />
+    <label class="f">Bio</label>
+    <textarea id="edBio" maxlength="160" style="min-height:60px"></textarea>
+    <label class="f">Avatar emoji</label>
+    <input id="edEmoji" maxlength="3" />
+    <div class="crow">
+      <button class="btn primary block" id="edSave">Save</button>
+      <button class="btn block" id="edCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   Pulse — a self-contained social feed demo
+   Data lives in IndexedDB (this browser). No server needed.
+   Features: text/photo/video posts, profiles (incl. anonymous),
+   GitHub/email/phone (simulated) login, like, comment, share.
+   ============================================================ */
+
+/* ---------- tiny IndexedDB wrapper ---------- */
+const DB_NAME = "pulse_db", DB_VER = 1;
+let db;
+function openDB(){
+  return new Promise((res, rej)=>{
+    const r = indexedDB.open(DB_NAME, DB_VER);
+    r.onupgradeneeded = e=>{
+      const d = e.target.result;
+      if(!d.objectStoreNames.contains("users")) d.createObjectStore("users",{keyPath:"id"});
+      if(!d.objectStoreNames.contains("posts")) d.createObjectStore("posts",{keyPath:"id"});
+      if(!d.objectStoreNames.contains("media")) d.createObjectStore("media");
+    };
+    r.onsuccess = e=>{ db = e.target.result; res(db); };
+    r.onerror = e=>rej(e.target.error);
+  });
+}
+const store = (name, mode="readonly")=>db.transaction(name, mode).objectStore(name);
+const dbGet = (s,k)=>new Promise((res,rej)=>{const r=store(s).get(k);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
+const dbAll = (s)=>new Promise((res,rej)=>{const r=store(s).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
+const dbPut = (s,v,k)=>new Promise((res,rej)=>{const r=store(s,"readwrite").put(v,k);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
+const dbDel = (s,k)=>new Promise((res,rej)=>{const r=store(s,"readwrite").delete(k);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});
+
+/* ---------- helpers ---------- */
+const uid = ()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+const esc = (s)=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const COLORS = ["#7c5cff","#ec4899","#22c55e","#f59e0b","#06b6d4","#ef4444","#8b5cf6","#14b8a6"];
+const colorFor = (id)=>{let h=0;for(const c of String(id))h=(h*31+c.charCodeAt(0))>>>0;return COLORS[h%COLORS.length];};
+function timeAgo(ts){
+  const s = Math.floor((Date.now()-ts)/1000);
+  if(s<60) return "abhi";
+  if(s<3600) return Math.floor(s/60)+"m";
+  if(s<86400) return Math.floor(s/3600)+"h";
+  if(s<604800) return Math.floor(s/86400)+"d";
+  return new Date(ts).toLocaleDateString("en-IN",{day:"numeric",month:"short"});
+}
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._t); t._t = setTimeout(()=>t.classList.remove("show"), 2200);
+}
+function avatarHTML(user, size=""){
+  const emoji = user && user.emoji;
+  const cls = "avatar"+(size?" "+size:"");
+  if(emoji) return `<div class="${cls}" style="background:${colorFor(user.id)}">${esc(emoji)}</div>`;
+  const initial = (user && user.name ? user.name.trim()[0] : "?").toUpperCase();
+  return `<div class="${cls}" style="background:${colorFor(user.id)}">${esc(initial)}</div>`;
+}
+
+/* ---------- state ---------- */
+let me = null;
+let users = {};
+let posts = [];
+const mediaURLCache = {};
+
+async function loadAll(){
+  users = {}; posts = [];
+  (await dbAll("users")).forEach(u=>users[u.id]=u);
+  posts = (await dbAll("posts")).sort((a,b)=>b.createdAt-a.createdAt);
+}
+async function getMediaURL(mediaId){
+  if(mediaURLCache[mediaId]) return mediaURLCache[mediaId];
+  const blob = await dbGet("media", mediaId);
+  if(!blob) return "";
+  const url = URL.createObjectURL(blob);
+  mediaURLCache[mediaId] = url;
+  return url;
+}
+
+/* ---------- routing ---------- */
+function go(hash){ location.hash = hash; }
+window.addEventListener("hashchange", render);
+function route(){
+  const h = location.hash.replace(/^#/,"") || "/feed";
+  return h.split("/").filter(Boolean); // e.g. ["feed"] or ["profile","id"]
+}
+
+/* ---------- auth ---------- */
+async function signIn(user){
+  await dbPut("users", user);
+  users[user.id] = user;
+  localStorage.setItem("pulse_session", user.id);
+  me = user;
+  toast("Welcome, "+user.name+"!");
+  go("/feed"); render();
+}
+function signOut(){
+  localStorage.removeItem("pulse_session");
+  me = null; toast("Signed out"); go("/feed"); render();
+}
+function anonTag(){
+  const animals=["Fox","Panda","Owl","Wolf","Tiger","Koala","Lynx","Raven","Otter","Hawk"];
+  const a=animals[Math.floor(Math.random()*animals.length)];
+  return a+" #"+Math.floor(1000+Math.random()*9000);
+}
+
+/* ---------- seed demo content ---------- */
+async function seedIfEmpty(){
+  if((await dbAll("posts")).length) return;
+  const demo = [
+    {id:uid(),name:"Aarav Mehta",handle:"aarav",provider:"github",bio:"Building things on the internet.",emoji:"🛠️"},
+    {id:uid(),name:"Priya",handle:"priya",provider:"email",bio:"Photography + chai.",emoji:"📷"},
+    {id:uid(),name:"Anonymous",handle:"anon",provider:"anon",anon:true,anonTag:"Owl #2048",bio:"",emoji:"🕶️"}
+  ];
+  demo.forEach(u=>dbPut("users",u));
+  const now = Date.now();
+  const seedPosts = [
+    {author:demo[0].id,type:"text",text:"Pulse pe pehla post! Yahan text, photo aur video — sab share kar sakte ho. Like, comment, share bhi hai. 🚀",createdAt:now-1000*60*40},
+    {author:demo[1].id,type:"text",text:"Aaj ki shaam ki roshni. Sunsets never get old. 🌇",createdAt:now-1000*60*90},
+    {author:demo[2].id,type:"text",text:"Koi anonymous ban ke bhi post kar sakta hai — naam chhupa ke baat karo.",createdAt:now-1000*60*180}
+  ];
+  for(const p of seedPosts){
+    await dbPut("posts",{id:uid(),author:p.author,type:p.type,text:p.text,mediaId:null,likes:[],comments:[],createdAt:p.createdAt});
+  }
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+function render(){
+  const r = route();
+  renderHeader();
+  if(r[0]==="login") return viewLogin();
+  if(r[0]==="profile") return viewProfile(r[1]);
+  if(r[0]==="post") return viewPost(r[1]);
+  return viewFeed();
+}
+
+function renderHeader(){
+  const box = document.getElementById("hauth");
+  if(me){
+    box.innerHTML = `<div style="display:flex;align-items:center;gap:9px">
+      <button class="btn sm ghost" data-go="#/profile/${me.id}">${avatarHTML(me,"sm")}</button>
+      <button class="btn sm" data-act="signout">Sign out</button>
+    </div>`;
+  } else {
+    box.innerHTML = `<button class="btn primary sm" data-go="#/login">Sign in</button>`;
+  }
+}
+
+/* ---------- login view ---------- */
+let loginTab = "github";
+function viewLogin(){
+  const app = document.getElementById("app");
+  const tabBtn = (id,label)=>`<button class="tab ${loginTab===id?"active":""}" data-tab="${id}">${label}</button>`;
+  let form = "";
+  if(loginTab==="github"){
+    form = `
+      <label class="f">GitHub username</label>
+      <input id="fHandle" placeholder="e.g. torvalds" value="" />
+      <label class="f">Display name</label>
+      <input id="fName" placeholder="Tumhara naam" />
+      <button class="btn primary block" style="margin-top:16px" data-act="login-github">Continue with GitHub</button>
+      <div class="note">Demo mode: real GitHub OAuth ke liye backend chahiye (neeche guide). Yahan hum ek GitHub-style profile bana dete hain.</div>`;
+  } else if(loginTab==="email"){
+    form = `
+      <label class="f">Email</label>
+      <input id="fEmail" type="email" placeholder="you@example.com" />
+      <label class="f">Display name</label>
+      <input id="fName" placeholder="Tumhara naam" />
+      <button class="btn primary block" style="margin-top:16px" data-act="login-email">Continue with Email</button>
+      <div class="note">Demo mode: email/OTP verification backend se hoti hai. Yahan turant sign in ho jaata hai.</div>`;
+  } else if(loginTab==="phone"){
+    form = `
+      <label class="f">Phone number</label>
+      <input id="fPhone" type="tel" placeholder="+91 98765 43210" />
+      <label class="f">Display name</label>
+      <input id="fName" placeholder="Tumhara naam" />
+      <button class="btn primary block" style="margin-top:16px" data-act="login-phone">Continue with Phone</button>
+      <div class="note">Demo mode: real OTP ke liye SMS provider (jaise Twilio/MSG91) chahiye.</div>`;
+  } else {
+    form = `
+      <label class="f">Anonymous display name (optional)</label>
+      <input id="fName" placeholder="khali chhod do to random milega" />
+      <button class="btn primary block" style="margin-top:16px" data-act="login-anon">Create anonymous profile</button>
+      <div class="note">Anonymous profile bhi ek normal profile hai — post, like, comment sab kar sakte ho. Bas naam chhupa rehta hai.</div>`;
+  }
+  app.innerHTML = `
+    <div class="hero">
+      <div style="font-size:44px">⚡</div>
+      <h1>Pulse</h1>
+      <p>Text, photo aur video public me share karo. Profile banao — GitHub, email, phone se, ya anonymous.</p>
+    </div>
+    <div class="card">
+      <div class="tabs">
+        ${tabBtn("github","GitHub")}${tabBtn("email","Email")}${tabBtn("phone","Phone")}${tabBtn("anon","Anonymous")}
+      </div>
+      ${form}
+    </div>
+    <div style="text-align:center;margin-top:6px"><button class="linkbtn" data-go="#/feed">← Feed dekho bina sign in</button></div>
+  `;
+}
+
+/* ---------- feed view ---------- */
+function viewFeed(){
+  const app = document.getElementById("app");
+  let html = "";
+  if(me){
+    html += `
+      <div class="card composer">
+        <div style="display:flex;gap:11px;align-items:flex-start">
+          ${avatarHTML(me)}
+          <div style="flex:1">
+            <div class="ctabs">
+              <button class="chip active" data-ctype="text">📝 Text</button>
+              <button class="chip" data-ctype="photo">🖼️ Photo</button>
+              <button class="chip" data-ctype="video">🎬 Video</button>
+            </div>
+            <textarea id="cText" placeholder="Kya soch rahe ho?"></textarea>
+            <div class="preview" id="cPreview"></div>
+            <div class="crow">
+              <label class="file-btn" id="cFileLabel">📎 <span id="cFileText">Attach photo</span>
+                <input type="file" id="cFile" />
+              </label>
+              <div class="hspacer" style="flex:1"></div>
+              <button class="btn primary" data-act="post">Post karo</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  } else {
+    html += `<div class="card" style="text-align:center">
+      <b>Post karne, like, comment ke liye sign in karo</b>
+      <p class="pmuted" style="margin:6px 0 12px">GitHub, email, phone ya anonymous — koi bhi.</p>
+      <button class="btn primary" data-go="#/login">Sign in / Create profile</button>
+    </div>`;
+  }
+  if(!posts.length){
+    html += `<div class="empty"><div class="big">🌱</div>Abhi koi post nahi. Pehla post tum karo!</div>`;
+  } else {
+    posts.forEach(p=>{ html += postHTML(p); });
+  }
+  app.innerHTML = html;
+  if(me) wireComposer();
+  hydrateMedia();
+}
+
+/* ---------- single post view ---------- */
+function viewPost(id){
+  const app = document.getElementById("app");
+  const p = posts.find(x=>x.id===id);
+  app.innerHTML = `<button class="back" data-go="#/feed">← Feed</button>` +
+    (p ? postHTML(p, true) : `<div class="empty">Post mila nahi.</div>`);
+  if(p) { const c = document.querySelector(".comments"); if(c) c.classList.add("open"); }
+  hydrateMedia();
+}
+
+/* ---------- profile view ---------- */
+function viewProfile(id){
+  const app = document.getElementById("app");
+  const u = users[id];
+  if(!u){ app.innerHTML = `<button class="back" data-go="#/feed">← Feed</button><div class="empty">Profile mila nahi.</div>`; return; }
+  const mine = posts.filter(p=>p.author===id);
+  const likesGot = mine.reduce((a,p)=>a+(p.likes?p.likes.length:0),0);
+  const isMe = me && me.id===id;
+  const nameLine = u.anon ? `Anonymous <span class="badge">${esc(u.anonTag||"anon")}</span>` : esc(u.name);
+  app.innerHTML = `
+    <button class="back" data-go="#/feed">← Feed</button>
+    <div class="card" style="padding:0;overflow:hidden">
+      <div class="pcover"></div>
+      <div class="pcard">
+        <div class="pmeta">
+          <div style="display:flex;align-items:flex-end;gap:12px">
+            ${avatarHTML(u,"lg")}
+            <div>
+              <div class="pname" style="font-size:18px">${nameLine}</div>
+              <div class="pmuted">@${esc(u.handle||"user")} · ${esc(u.provider||"user")}</div>
+            </div>
+          </div>
+          ${isMe?`<button class="btn sm" data-act="edit-profile">Edit</button>`:""}
+        </div>
+        ${u.bio?`<p style="margin:12px 0 0;font-size:14.5px">${esc(u.bio)}</p>`:""}
+        <div class="pstats">
+          <div><b>${mine.length}</b>posts</div>
+          <div><b>${likesGot}</b>likes</div>
+        </div>
+      </div>
+    </div>
+    <div class="tabsline"><button class="active">Posts</button></div>
+    ${mine.length ? mine.map(p=>postHTML(p)).join("") : `<div class="empty"><div class="big">📭</div>Koi post nahi.</div>`}
+  `;
+  hydrateMedia();
+}
+
+/* ---------- post card HTML ---------- */
+function postHTML(p, detail){
+  const u = users[p.author] || {id:p.author,name:"Unknown",handle:"unknown"};
+  const liked = me && p.likes && p.likes.includes(me.id);
+  const likeCount = p.likes?p.likes.length:0;
+  const cc = p.comments?p.comments.length:0;
+  const nameHTML = u.anon
+    ? `Anonymous <span class="badge">${esc(u.anonTag||"anon")}</span>`
+    : esc(u.name);
+  const del = (me && me.id===p.author) ? `<button class="act" data-act="delete" data-id="${p.id}" title="Delete">🗑️</button>` : "";
+  return `
+  <div class="card post" data-post="${p.id}">
+    <div class="post-head">
+      <button data-go="#/profile/${u.id}" style="border:none;background:none;padding:0">${avatarHTML(u)}</button>
+      <div style="flex:1">
+        <div class="pname">
+          <button data-go="#/profile/${u.id}" style="border:none;background:none;padding:0;color:inherit;font:inherit">${nameHTML}</button>
+        </div>
+        <div class="pmuted">@${esc(u.handle||"user")} · ${timeAgo(p.createdAt)}</div>
+      </div>
+      ${del}
+    </div>
+    ${p.text?`<div class="post-body">${esc(p.text)}</div>`:""}
+    ${p.mediaId?`<div class="post-media" data-media="${p.mediaId}" data-kind="${esc(p.type)}"></div>`:""}
+    <div class="actions">
+      <button class="act ${liked?"liked":""}" data-act="like" data-id="${p.id}">
+        ${liked?"❤️":"🤍"} <span>${likeCount}</span>
+      </button>
+      <button class="act" data-act="toggle-comments" data-id="${p.id}">💬 <span>${cc}</span></button>
+      <button class="act" data-act="share" data-id="${p.id}">🔗 Share</button>
+      <div style="flex:1"></div>
+      <button class="act" data-go="#/post/${p.id}">Open</button>
+    </div>
+    <div class="comments" data-comments="${p.id}">
+      ${commentsHTML(p)}
+      ${me?`<div class="cform">
+        <input placeholder="Comment likho..." data-cinput="${p.id}" />
+        <button class="btn primary sm" data-act="comment" data-id="${p.id}">Send</button>
+      </div>`:``}
+    </div>
+  </div>`;
+}
+function commentsHTML(p){
+  if(!p.comments || !p.comments.length) return `<div class="pmuted" style="margin-bottom:8px">Koi comment nahi. Pehla comment tum karo.</div>`;
+  return p.comments.map(c=>{
+    const u = users[c.author] || {id:c.author,name:"Unknown"};
+    const n = u.anon ? `Anonymous <span class="badge">${esc(u.anonTag||"anon")}</span>` : esc(u.name);
+    return `<div class="citem">
+      <button data-go="#/profile/${u.id}" style="border:none;background:none;padding:0">${avatarHTML(u,"sm")}</button>
+      <div class="cbubble"><div class="n">${n}</div><div class="t">${esc(c.text)}</div></div>
+    </div>`;
+  }).join("");
+}
+
+/* ---------- hydrate media blobs ---------- */
+async function hydrateMedia(){
+  const nodes = document.querySelectorAll("[data-media]");
+  for(const n of nodes){
+    const id = n.getAttribute("data-media");
+    const kind = n.getAttribute("data-kind");
+    const url = await getMediaURL(id);
+    if(!url) continue;
+    n.innerHTML = kind==="video"
+      ? `<video src="${url}" controls playsinline preload="metadata"></video>`
+      : `<img src="${url}" alt="post media" loading="lazy" />`;
+  }
+}
+
+/* ============================================================
+   COMPOSER
+   ============================================================ */
+let cType = "text", cPendingBlob = null;
+function wireComposer(){
+  document.querySelectorAll("[data-ctype]").forEach(b=>{
+    b.onclick = ()=>{
+      cType = b.getAttribute("data-ctype");
+      document.querySelectorAll("[data-ctype]").forEach(x=>x.classList.toggle("active", x===b));
+      const lbl = document.getElementById("cFileText");
+      const inp = document.getElementById("cFile");
+      if(cType==="photo"){ lbl.textContent="Attach photo"; inp.accept="image/*"; }
+      else if(cType==="video"){ lbl.textContent="Attach video"; inp.accept="video/*"; }
+      else { lbl.textContent="Attach photo"; inp.accept="image/*"; }
+      clearPreview();
+    };
+  });
+  const file = document.getElementById("cFile");
+  file.onchange = ()=>{
+    const f = file.files[0]; if(!f) return;
+    cPendingBlob = f;
+    const url = URL.createObjectURL(f);
+    const prev = document.getElementById("cPreview");
+    prev.style.display="block";
+    prev.innerHTML = `<button class="x" id="cClear">×</button>` +
+      (f.type.startsWith("video")?`<video src="${url}" controls></video>`:`<img src="${url}" />`);
+    document.getElementById("cClear").onclick = ()=>{ clearPreview(); file.value=""; };
+  };
+}
+function clearPreview(){
+  cPendingBlob = null;
+  const prev = document.getElementById("cPreview");
+  if(prev){ prev.style.display="none"; prev.innerHTML=""; }
+}
+async function createPost(){
+  if(!me){ toast("Pehle sign in karo"); go("/login"); render(); return; }
+  const text = (document.getElementById("cText").value || "").trim();
+  let mediaId = null;
+  if(cPendingBlob){
+    mediaId = uid();
+    await dbPut("media", cPendingBlob, mediaId);
+  }
+  if(!text && !mediaId){ toast("Kuch likho ya photo/video lagao"); return; }
+  const type = mediaId ? (cPendingBlob.type.startsWith("video")?"video":"photo") : "text";
+  const post = {id:uid(), author:me.id, type, text, mediaId, likes:[], comments:[], createdAt:Date.now()};
+  await dbPut("posts", post);
+  posts.unshift(post);
+  toast("Posted! 🎉");
+  go("/feed"); render();
+}
+
+/* ============================================================
+   ACTIONS (event delegation)
+   ============================================================ */
+document.addEventListener("click", async (e)=>{
+  const goEl = e.target.closest("[data-go]");
+  if(goEl){ go(goEl.getAttribute("data-go")); return; }
+  const tabEl = e.target.closest("[data-tab]");
+  if(tabEl){ loginTab = tabEl.getAttribute("data-tab"); viewLogin(); return; }
+  const actEl = e.target.closest("[data-act]");
+  if(!actEl) return;
+  const act = actEl.getAttribute("data-act");
+  const id = actEl.getAttribute("data-id");
+
+  if(act==="signout") return signOut();
+
+  if(act==="login-github"){
+    const handle = (document.getElementById("fHandle").value||"").trim() || ("user"+Math.floor(Math.random()*9000));
+    const name = (document.getElementById("fName").value||"").trim() || handle;
+    return signIn({id:uid(), name, handle, provider:"github", bio:"", emoji:""});
+  }
+  if(act==="login-email"){
+    const email = (document.getElementById("fEmail").value||"").trim();
+    if(!email || !email.includes("@")) return toast("Sahi email daalo");
+    const name = (document.getElementById("fName").value||"").trim() || email.split("@")[0];
+    return signIn({id:uid(), name, handle:email.split("@")[0], provider:"email", email, bio:"", emoji:""});
+  }
+  if(act==="login-phone"){
+    const phone = (document.getElementById("fPhone").value||"").trim();
+    if(phone.replace(/\D/g,"").length < 8) return toast("Sahi phone number daalo");
+    const name = (document.getElementById("fName").value||"").trim() || "User "+phone.slice(-4);
+    return signIn({id:uid(), name, handle:"user"+phone.slice(-4), provider:"phone", phone, bio:"", emoji:""});
+  }
+  if(act==="login-anon"){
+    const name = (document.getElementById("fName").value||"").trim() || "Anonymous";
+    const tag = anonTag();
+    return signIn({id:uid(), name, handle:"anon"+tag.split("#")[1].trim(), provider:"anon", anon:true, anonTag:tag, bio:"", emoji:"🕶️"});
+  }
+
+  if(act==="post") return createPost();
+
+  if(act==="like"){
+    if(!me){ toast("Like karne ke liye sign in karo"); return go("/login"), render(); }
+    const p = posts.find(x=>x.id===id); if(!p) return;
+    p.likes = p.likes||[];
+    const i = p.likes.indexOf(me.id);
+    if(i>=0) p.likes.splice(i,1); else p.likes.push(me.id);
+    await dbPut("posts", p); render();
+    return;
+  }
+  if(act==="toggle-comments"){
+    const box = document.querySelector(`[data-comments="${id}"]`);
+    if(box) box.classList.toggle("open");
+    return;
+  }
+  if(act==="comment"){
+    if(!me){ toast("Comment ke liye sign in karo"); return go("/login"), render(); }
+    const input = document.querySelector(`[data-cinput="${id}"]`);
+    const text = (input.value||"").trim();
+    if(!text) return;
+    const p = posts.find(x=>x.id===id); if(!p) return;
+    p.comments = p.comments||[];
+    p.comments.push({id:uid(), author:me.id, text, createdAt:Date.now()});
+    await dbPut("posts", p); render();
+    const box = document.querySelector(`[data-comments="${id}"]`); if(box) box.classList.add("open");
+    return;
+  }
+  if(act==="share"){
+    const link = location.href.split("#")[0] + "#/post/" + id;
+    try{
+      if(navigator.share){ await navigator.share({title:"Pulse post", text:"Ye post dekho", url:link}); }
+      else { await navigator.clipboard.writeText(link); toast("Link copied! 🔗"); }
+    }catch(err){ toast("Share cancel"); }
+    return;
+  }
+  if(act==="delete"){
+    if(!me) return;
+    const p = posts.find(x=>x.id===id); if(!p || p.author!==me.id) return;
+    if(!confirm("Ye post delete karein?")) return;
+    if(p.mediaId){ try{ await dbDel("media", p.mediaId); }catch(e){} }
+    await dbDel("posts", id);
+    posts = posts.filter(x=>x.id!==id);
+    toast("Post delete ho gaya"); render();
+    return;
+  }
+  if(act==="edit-profile") return openEdit();
+
+  // comment: Enter key support handled below via keydown
+});
+
+document.addEventListener("keydown", (e)=>{
+  if(e.key==="Enter" && e.target.matches("[data-cinput]")){
+    e.preventDefault();
+    const id = e.target.getAttribute("data-cinput");
+    document.querySelector(`[data-act="comment"][data-id="${id}"]`).click();
+  }
+});
+
+/* ---------- edit profile modal ---------- */
+function openEdit(){
+  if(!me) return;
+  document.getElementById("edName").value = me.name||"";
+  document.getElementById("edBio").value = me.bio||"";
+  document.getElementById("edEmoji").value = me.emoji||"";
+  document.getElementById("editModal").classList.add("show");
+}
+document.getElementById("edCancel").onclick = ()=>document.getElementById("editModal").classList.remove("show");
+document.getElementById("edSave").onclick = async ()=>{
+  me.name = (document.getElementById("edName").value||"").trim() || me.name;
+  me.bio = (document.getElementById("edBio").value||"").trim();
+  me.emoji = (document.getElementById("edEmoji").value||"").trim();
+  await dbPut("users", me); users[me.id]=me;
+  document.getElementById("editModal").classList.remove("show");
+  toast("Profile update ho gaya"); render();
+};
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+(async function boot(){
+  await openDB();
+  await seedIfEmpty();
+  await loadAll();
+  const sid = localStorage.getItem("pulse_session");
+  if(sid && users[sid]) me = users[sid];
+  render();
+})();
+</script>
+</body>
+</html>
