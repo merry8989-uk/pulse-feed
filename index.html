@@ -128,6 +128,8 @@
   .reader-count{font-size:13px;color:var(--muted);font-weight:600;min-width:54px;text-align:right}
   .reader-body{flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:12px;-webkit-overflow-scrolling:touch}
   .pdf-canvas{max-width:100%;height:auto;border-radius:8px;background:#fff;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .pdf-frame{width:100%;min-height:70vh;border:0;border-radius:8px;background:#fff}
+  .preview .pdfthumb canvas{max-width:110px;border-radius:8px;display:block}
   .reader-nav{display:flex;gap:10px;padding:12px 14px;border-top:1px solid var(--border)}
   .reader-nav .btn{flex:1;justify-content:center;display:flex}
 </style>
@@ -466,7 +468,10 @@ function viewProfile(id){
 
 function mediaItems(p){
   if(Array.isArray(p.media) && p.media.length) return p.media;
-  if(p.media_url) return [{url:p.media_url, path:p.media_path, kind:(p.type==="video"?"video":"image")}];
+  if(p.media_url){
+    const kind = p.type==="video" ? "video" : (p.type==="pdf" ? "pdf" : "image");
+    return [{url:p.media_url, path:p.media_path, kind}];
+  }
   return [];
 }
 function mediaHTML(p){
@@ -568,12 +573,28 @@ function renderPreview(){
   if(!cPendingFiles.length){ prev.style.display="none"; prev.innerHTML=""; return; }
   prev.style.display="block";
   const first=cPendingFiles[0];
+  const isPdf = first.type==="application/pdf" || /\.pdf$/i.test(first.name||"");
   let inner="";
   if(first.type.startsWith("video")) inner=`<video src="${URL.createObjectURL(first)}" controls></video>`;
-  else if(first.type==="application/pdf") inner=`<div class="thumbs"><div class="pchip">📄 ${esc(first.name)}</div></div>`;
+  else if(isPdf) inner=`<div class="thumbs"><div class="pchip"><span class="pdfthumb" id="cPdfThumb"></span><span>📄 ${esc(first.name)}</span></div></div>`;
   else inner=`<div class="thumbs">${cPendingFiles.map(f=>`<img src="${URL.createObjectURL(f)}" />`).join("")}</div>`;
   prev.innerHTML=`<button class="x" id="cClear">×</button>${inner}`;
   document.getElementById("cClear").onclick=()=>{ clearPreview(); const fi=document.getElementById("cFile"); if(fi) fi.value=""; };
+  if(isPdf){ const tb=document.getElementById("cPdfThumb"); if(tb) pdfThumb(first, tb); }
+}
+async function pdfThumb(file, box){
+  try{
+    if(!window.pdfjsLib) return;
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    const buf=await file.arrayBuffer();
+    const doc=await window.pdfjsLib.getDocument({data:buf}).promise;
+    const page=await doc.getPage(1);
+    const vp=page.getViewport({scale:0.35});
+    const canvas=document.createElement("canvas");
+    canvas.width=Math.floor(vp.width); canvas.height=Math.floor(vp.height);
+    box.innerHTML=""; box.appendChild(canvas);
+    await page.render({canvasContext:canvas.getContext("2d"), viewport:vp}).promise;
+  }catch(e){ /* thumbnail optional */ }
 }
 function clearPreview(){ cPendingFiles=[]; const p=document.getElementById("cPreview"); if(p){ p.style.display="none"; p.innerHTML=""; } }
 
@@ -638,12 +659,17 @@ async function openPdfReader(url){
   document.getElementById("pdfCount").textContent="–";
   document.getElementById("pdfCanvasWrap").innerHTML='<div class="pmuted" style="padding:30px">PDF load ho raha hai…</div>';
   try{
-    if(!window.pdfjsLib){ toast("PDF reader load nahi hua"); return; }
+    if(!window.pdfjsLib){ pdfFallback(url); return; }
     window.pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
     pdfDoc=await window.pdfjsLib.getDocument(url).promise;
     document.getElementById("pdfCount").textContent=pdfDoc.numPages;
     await renderPdfPage();
-  }catch(err){ console.error(err); document.getElementById("pdfCanvasWrap").innerHTML='<div class="pmuted" style="padding:30px">PDF khul nahi paaya.</div>'; }
+  }catch(err){ console.error(err); pdfFallback(url); }
+}
+function pdfFallback(url){
+  const wrap=document.getElementById("pdfCanvasWrap");
+  wrap.innerHTML=`<iframe class="pdf-frame" src="${esc(url)}" title="PDF document"></iframe>`;
+  document.getElementById("pdfCount").textContent="–";
 }
 async function renderPdfPage(){
   if(!pdfDoc) return;
