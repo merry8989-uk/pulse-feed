@@ -88,3 +88,21 @@ Apni values daalo aur save karo. Bas — app ab live backend se juda hai.
 - **Custom domain** — `pulse.in` jaisa. GitHub Pages me: repo → Settings → Pages → Custom domain.
 - **Cloudflare R2** — jab video traffic badhe. Supabase Storage ki jagah R2 pe media daalo (egress free). Iske liye ek chhota Cloudflare Worker + presigned upload URL chahiye.
 - **Moderation** — open UGC se pehle report/hide feature add karna zaroori (IT Rules 2021).
+
+---
+
+## Update (v2) — multiple photos + PDF posts
+
+App me ab ye features hain:
+
+- **Multiple photos** ek post me — Instagram jaisa **swipeable carousel** (dots + counter ke saath).
+- **PDF post** — PDF upload karo, aur post me "Read PDF" button se ek **swipeable reader** khulta hai (page right-to-left swipe ya arrows se badal sakte ho).
+
+Iske liye database me ek naya column chahiye. **Agar tumne pehle `setup.sql` chala diya tha**, to sirf ye ek chhota migration chalao:
+
+1. Supabase → **SQL Editor** → New query.
+2. `migrate_v2.sql` paste karke **Run**.
+
+(Agar tum abhi shuru kar rahe ho, to naya `setup.sql` already ye column bana deta hai — migration ki zaroorat nahi.)
+
+Note: PDF reading browser me **PDF.js** (CDN se) se hoti hai — koi extra setup nahi chahiye.
