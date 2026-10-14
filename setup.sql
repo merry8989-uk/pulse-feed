@@ -25,6 +25,7 @@ create table if not exists public.posts (
   text        text default '',
   media_url   text,
   media_path  text,
+  media       jsonb not null default '[]'::jsonb,  -- array of {url,path,kind} for carousel / pdf / video
   created_at  timestamptz not null default now()
 );
 
