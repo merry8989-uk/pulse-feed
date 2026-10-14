@@ -100,6 +100,36 @@
   .setup code{background:var(--bg2);border:1px solid var(--border);padding:2px 6px;border-radius:6px;font-size:13px}
   .setup ol{padding-left:20px}
   .setup li{margin:6px 0}
+  /* carousel */
+  .carousel{position:relative}
+  .carousel .track{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-ms-overflow-style:none}
+  .carousel .track::-webkit-scrollbar{display:none}
+  .carousel .slide{min-width:100%;scroll-snap-align:center}
+  .carousel .slide img{width:100%;display:block;max-height:520px;object-fit:contain;background:#000}
+  .carousel .dots{position:absolute;bottom:8px;left:0;right:0;display:flex;gap:6px;justify-content:center;pointer-events:none}
+  .carousel .dots .dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.45)}
+  .carousel .dots .dot.on{background:#fff}
+  .carousel .counter{position:absolute;top:8px;right:10px;background:rgba(0,0,0,.6);color:#fff;font-size:12px;font-weight:600;padding:2px 8px;border-radius:20px}
+  /* pdf card */
+  .pdfcard{display:flex;align-items:center;gap:12px;padding:14px;background:var(--bg2);margin-top:12px;border-radius:13px;border:1px solid var(--border)}
+  .pdfcard .pdf-ico{font-size:30px;line-height:1}
+  .pdfcard .pdf-meta{flex:1;display:flex;flex-direction:column}
+  .pdfcard .pdf-meta b{font-size:14px}
+  .pdfcard .pdf-meta span{font-size:12.5px;color:var(--muted)}
+  /* composer preview grid */
+  .preview .thumbs{display:flex;gap:6px;overflow-x:auto;padding:8px}
+  .preview .thumbs img{width:92px;height:92px;object-fit:cover;border-radius:8px;flex:0 0 auto}
+  .preview .thumbs .pchip{display:flex;align-items:center;gap:8px;padding:10px;background:var(--bg2);border-radius:8px;font-size:13px}
+  /* pdf reader overlay */
+  .reader{position:fixed;inset:0;background:#0b0d11;z-index:300;display:none;flex-direction:column}
+  .reader.show{display:flex}
+  .reader-top{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border)}
+  .reader-title{flex:1;font-weight:700;font-size:15px;text-align:center}
+  .reader-count{font-size:13px;color:var(--muted);font-weight:600;min-width:54px;text-align:right}
+  .reader-body{flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:12px;-webkit-overflow-scrolling:touch}
+  .pdf-canvas{max-width:100%;height:auto;border-radius:8px;background:#fff;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .reader-nav{display:flex;gap:10px;padding:12px 14px;border-top:1px solid var(--border)}
+  .reader-nav .btn{flex:1;justify-content:center;display:flex}
 </style>
 </head>
 <body>
@@ -126,6 +156,23 @@
       <button class="btn primary block" id="edSave">Save</button>
       <button class="btn block" id="edCancel">Cancel</button>
     </div>
+  </div>
+</div>
+
+<!-- PDF.js (page rendering + swipe reader) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+<!-- PDF reader overlay -->
+<div class="reader" id="pdfReader">
+  <div class="reader-top">
+    <button class="btn sm ghost" id="pdfClose" aria-label="Close">✕</button>
+    <div class="reader-title">PDF</div>
+    <div class="reader-count"><span id="pdfPage">1</span> / <span id="pdfCount">–</span></div>
+  </div>
+  <div class="reader-body" id="pdfCanvasWrap"></div>
+  <div class="reader-nav">
+    <button class="btn" id="pdfPrev">‹ Prev</button>
+    <button class="btn" id="pdfNext">Next ›</button>
   </div>
 </div>
 
@@ -308,14 +355,28 @@ async function loadMyLikes(){
   const { data } = await sb.from("likes").select("post_id").eq("user_id", user.id);
   (data||[]).forEach(l=>myLikes.add(l.post_id));
 }
-const POST_SELECT = `id, type, text, media_url, created_at,
+const POST_COLS_BASE = `id, type, text, media_url, created_at,
   author:profiles!posts_author_fkey(id, name, handle, emoji, is_anonymous),
   likes(count), comments(count)`;
+const POST_SELECT = `id, type, text, media, media_url, created_at,
+  author:profiles!posts_author_fkey(id, name, handle, emoji, is_anonymous),
+  likes(count), comments(count)`;
+
+function postsQuery(select, opts={}){
+  let q=sb.from("posts").select(select);
+  if(opts.author) q=q.eq("author", opts.author);
+  return q.order("created_at",{ascending:false}).limit(60);
+}
+async function fetchPosts(opts={}){
+  let res=await postsQuery(POST_SELECT, opts);
+  if(res.error && /media/i.test(res.error.message||"")) res=await postsQuery(POST_COLS_BASE, opts);
+  return res;
+}
 
 async function loadFeed(){
   if(!CONFIGURED) return;
   await loadMyLikes();
-  const { data, error } = await sb.from("posts").select(POST_SELECT).order("created_at",{ascending:false}).limit(60);
+  const { data, error } = await fetchPosts();
   if(error){ console.error(error); toast("Feed load nahi hua"); return; }
   posts=data||[];
   render();
@@ -332,8 +393,9 @@ function viewFeed(){
           <div style="flex:1">
             <div class="ctabs">
               <button class="chip active" data-ctype="text">📝 Text</button>
-              <button class="chip" data-ctype="photo">🖼️ Photo</button>
+              <button class="chip" data-ctype="photo">🖼️ Photos</button>
               <button class="chip" data-ctype="video">🎬 Video</button>
+              <button class="chip" data-ctype="pdf">📄 PDF</button>
             </div>
             <textarea id="cText" placeholder="Kya soch rahe ho?"></textarea>
             <div class="preview" id="cPreview"></div>
@@ -356,6 +418,7 @@ function viewFeed(){
         : `<div class="empty"><div class="big">🌱</div>Abhi koi post nahi. Pehla post tum karo!</div>`;
   app.innerHTML=html;
   if(user && profile) wireComposer();
+  wireCarousels();
 }
 
 function viewPost(id){
@@ -363,6 +426,7 @@ function viewPost(id){
   const p=posts.find(x=>x.id===id);
   app.innerHTML=`<button class="back" data-go="#/feed">← Feed</button>`+(p?postHTML(p):`<div class="empty">Post mila nahi.</div>`);
   if(p){ const c=document.querySelector(".comments"); if(c){ c.classList.add("open"); loadComments(p.id); } }
+  wireCarousels();
 }
 
 function viewProfile(id){
@@ -372,7 +436,7 @@ function viewProfile(id){
   (async ()=>{
     const { data:u } = await sb.from("profiles").select("*").eq("id",id).maybeSingle();
     if(!u){ app.innerHTML=`<button class="back" data-go="#/feed">← Feed</button><div class="empty">Profile mila nahi.</div>`; return; }
-    const { data:mine } = await sb.from("posts").select(POST_SELECT).eq("author",id).order("created_at",{ascending:false}).limit(60);
+    const { data:mine } = await fetchPosts({ author:id });
     const list=mine||[];
     const likesGot=list.reduce((a,p)=>a+(p.likes?.[0]?.count||0),0);
     const isMe=user && user.id===id;
@@ -396,7 +460,29 @@ function viewProfile(id){
       </div>
       <div class="tabsline"><button class="active">Posts</button></div>
       ${list.length?list.map(p=>postHTML(p)).join(""):`<div class="empty"><div class="big">📭</div>Koi post nahi.</div>`}`;
+    wireCarousels();
   })();
+}
+
+function mediaItems(p){
+  if(Array.isArray(p.media) && p.media.length) return p.media;
+  if(p.media_url) return [{url:p.media_url, path:p.media_path, kind:(p.type==="video"?"video":"image")}];
+  return [];
+}
+function mediaHTML(p){
+  const items=mediaItems(p);
+  if(!items.length) return "";
+  const imgs=items.filter(i=>i.kind==="image");
+  const pdf=items.find(i=>i.kind==="pdf");
+  const vid=items.find(i=>i.kind==="video");
+  if(pdf) return `<div class="pdfcard"><div class="pdf-ico">📄</div><div class="pdf-meta"><b>PDF document</b><span>Tap karke padho</span></div><button class="btn primary sm" data-act="open-pdf" data-url="${esc(pdf.url)}">Read PDF</button></div>`;
+  if(vid) return `<div class="post-media"><video src="${esc(vid.url)}" controls playsinline preload="metadata"></video></div>`;
+  if(imgs.length===1) return `<div class="post-media"><img src="${esc(imgs[0].url)}" alt="photo" loading="lazy" /></div>`;
+  return `<div class="post-media carousel" data-carousel>
+    <div class="track">${imgs.map(i=>`<div class="slide"><img src="${esc(i.url)}" alt="photo" loading="lazy" /></div>`).join("")}</div>
+    <div class="counter"><span class="cur">1</span>/${imgs.length}</div>
+    <div class="dots">${imgs.map((_,i)=>`<span class="dot ${i===0?"on":""}"></span>`).join("")}</div>
+  </div>`;
 }
 
 function postHTML(p){
@@ -406,11 +492,7 @@ function postHTML(p){
   const cc=p.comments?.[0]?.count||0;
   const nameHTML=u.is_anonymous?`Anonymous <span class="badge">${esc(u.handle||"anon")}</span>`:esc(u.name);
   const del=(user && user.id===u.id)?`<button class="act" data-act="delete" data-id="${p.id}" title="Delete">🗑️</button>`:"";
-  const media = p.media_url
-    ? `<div class="post-media">${p.type==="video"
-        ?`<video src="${esc(p.media_url)}" controls playsinline preload="metadata"></video>`
-        :`<img src="${esc(p.media_url)}" alt="post media" loading="lazy" />`}</div>`
-    : "";
+  const media = mediaHTML(p);
   return `
   <div class="card post" data-post="${p.id}">
     <div class="post-head">
@@ -457,54 +539,154 @@ async function loadComments(postId){
 /* ============================================================
    COMPOSER
    ============================================================ */
-let cType="text", cPending=null;
+let cType="text", cPendingFiles=[];
 function wireComposer(){
   document.querySelectorAll("[data-ctype]").forEach(b=>{
     b.onclick=()=>{
       cType=b.getAttribute("data-ctype");
       document.querySelectorAll("[data-ctype]").forEach(x=>x.classList.toggle("active",x===b));
       const lbl=document.getElementById("cFileText"), inp=document.getElementById("cFile");
-      if(cType==="photo"){ lbl.textContent="Attach photo"; inp.accept="image/*"; }
-      else if(cType==="video"){ lbl.textContent="Attach video"; inp.accept="video/*"; }
-      else { lbl.textContent="Attach photo"; inp.accept="image/*"; }
+      if(cType==="photo"){ lbl.textContent="Attach photos"; inp.accept="image/*"; inp.multiple=true; }
+      else if(cType==="video"){ lbl.textContent="Attach video"; inp.accept="video/*"; inp.multiple=false; }
+      else if(cType==="pdf"){ lbl.textContent="Attach PDF"; inp.accept="application/pdf"; inp.multiple=false; }
+      else { lbl.textContent="Attach photo"; inp.accept="image/*"; inp.multiple=true; }
       clearPreview();
     };
   });
   const file=document.getElementById("cFile");
   file.onchange=()=>{
-    const f=file.files[0]; if(!f) return;
-    if(f.size>50*1024*1024){ toast("File 50 MB se badi hai"); file.value=""; return; }
-    cPending=f;
-    const url=URL.createObjectURL(f);
-    const prev=document.getElementById("cPreview");
-    prev.style.display="block";
-    prev.innerHTML=`<button class="x" id="cClear">×</button>`+(f.type.startsWith("video")?`<video src="${url}" controls></video>`:`<img src="${url}" />`);
-    document.getElementById("cClear").onclick=()=>{ clearPreview(); file.value=""; };
+    const fs=Array.from(file.files||[]);
+    if(!fs.length) return;
+    if(fs.some(f=>f.size>50*1024*1024)){ toast("Ek file 50 MB se badi hai"); file.value=""; return; }
+    cPendingFiles=(cType==="photo"||cType==="text")?fs.slice(0,10):[fs[0]];
+    renderPreview();
   };
 }
-function clearPreview(){ cPending=null; const p=document.getElementById("cPreview"); if(p){ p.style.display="none"; p.innerHTML=""; } }
+function renderPreview(){
+  const prev=document.getElementById("cPreview");
+  if(!prev) return;
+  if(!cPendingFiles.length){ prev.style.display="none"; prev.innerHTML=""; return; }
+  prev.style.display="block";
+  const first=cPendingFiles[0];
+  let inner="";
+  if(first.type.startsWith("video")) inner=`<video src="${URL.createObjectURL(first)}" controls></video>`;
+  else if(first.type==="application/pdf") inner=`<div class="thumbs"><div class="pchip">📄 ${esc(first.name)}</div></div>`;
+  else inner=`<div class="thumbs">${cPendingFiles.map(f=>`<img src="${URL.createObjectURL(f)}" />`).join("")}</div>`;
+  prev.innerHTML=`<button class="x" id="cClear">×</button>${inner}`;
+  document.getElementById("cClear").onclick=()=>{ clearPreview(); const fi=document.getElementById("cFile"); if(fi) fi.value=""; };
+}
+function clearPreview(){ cPendingFiles=[]; const p=document.getElementById("cPreview"); if(p){ p.style.display="none"; p.innerHTML=""; } }
 
 async function createPost(){
   if(!user){ toast("Pehle sign in karo"); go("/login"); render(); return; }
   const text=(document.getElementById("cText").value||"").trim();
-  if(!text && !cPending){ toast("Kuch likho ya photo/video lagao"); return; }
-  let media_url=null, media_path=null, type="text";
-  if(cPending){
-    type=cPending.type.startsWith("video")?"video":"photo";
-    const ext=(cPending.name.split(".").pop()||"bin").toLowerCase().slice(0,5);
-    media_path=`${user.id}/${crypto.randomUUID()}.${ext}`;
+  if(!text && !cPendingFiles.length){ toast("Kuch likho ya file lagao"); return; }
+  let media=[], type="text", media_url=null, media_path=null;
+  if(cPendingFiles.length){
     toast("Upload ho raha hai…");
-    const up=await sb.storage.from("media").upload(media_path, cPending, {cacheControl:"3600", upsert:false});
-    if(up.error){ console.error(up.error); toast("Upload fail: "+up.error.message); return; }
-    media_url=sb.storage.from("media").getPublicUrl(media_path).data.publicUrl;
+    for(const f of cPendingFiles){
+      const ext=(f.name.split(".").pop()||"bin").toLowerCase().slice(0,5);
+      const path=`${user.id}/${crypto.randomUUID()}.${ext}`;
+      const up=await sb.storage.from("media").upload(path, f, {cacheControl:"3600", upsert:false});
+      if(up.error){ console.error(up.error); toast("Upload fail: "+up.error.message); return; }
+      const url=sb.storage.from("media").getPublicUrl(path).data.publicUrl;
+      const kind=(f.type==="application/pdf"||ext==="pdf")?"pdf":(f.type.startsWith("video")?"video":"image");
+      media.push({url, path, kind});
+    }
+    const kinds=media.map(m=>m.kind);
+    if(kinds.includes("pdf")) type="pdf";
+    else if(kinds.includes("video")) type="video";
+    else type = media.length>1 ? "carousel" : "photo";
+    media_url=media[0].url; media_path=media[0].path;
   }
-  const { error }=await sb.from("posts").insert({ author:user.id, type, text, media_url, media_path });
+  let ins=await sb.from("posts").insert({ author:user.id, type, text, media_url, media_path, media });
+  if(ins.error && /media/i.test(ins.error.message||"")){
+    ins=await sb.from("posts").insert({ author:user.id, type, text, media_url, media_path });
+  }
+  const error=ins.error;
   if(error){ console.error(error); toast("Post fail: "+error.message); return; }
   clearPreview();
   toast("Posted! 🎉");
   go("/feed");
   await loadFeed();
 }
+
+/* ============================================================
+   CAROUSEL + PDF READER
+   ============================================================ */
+function wireCarousels(){
+  document.querySelectorAll("[data-carousel]").forEach(c=>{
+    const track=c.querySelector(".track");
+    if(!track) return;
+    const dots=[...c.querySelectorAll(".dots .dot")];
+    const cur=c.querySelector(".cur");
+    track.addEventListener("scroll", ()=>{
+      const i=Math.round(track.scrollLeft / Math.max(track.clientWidth,1));
+      dots.forEach((d,di)=>d.classList.toggle("on", di===i));
+      if(cur) cur.textContent=(i+1);
+    }, {passive:true});
+  });
+}
+
+let pdfDoc=null, pdfPageNo=1;
+async function openPdfReader(url){
+  if(!url) return;
+  const ov=document.getElementById("pdfReader");
+  ov.classList.add("show");
+  pdfPageNo=1; pdfDoc=null;
+  document.getElementById("pdfPage").textContent="1";
+  document.getElementById("pdfCount").textContent="–";
+  document.getElementById("pdfCanvasWrap").innerHTML='<div class="pmuted" style="padding:30px">PDF load ho raha hai…</div>';
+  try{
+    if(!window.pdfjsLib){ toast("PDF reader load nahi hua"); return; }
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    pdfDoc=await window.pdfjsLib.getDocument(url).promise;
+    document.getElementById("pdfCount").textContent=pdfDoc.numPages;
+    await renderPdfPage();
+  }catch(err){ console.error(err); document.getElementById("pdfCanvasWrap").innerHTML='<div class="pmuted" style="padding:30px">PDF khul nahi paaya.</div>'; }
+}
+async function renderPdfPage(){
+  if(!pdfDoc) return;
+  const page=await pdfDoc.getPage(pdfPageNo);
+  const wrap=document.getElementById("pdfCanvasWrap");
+  const avail=Math.min((wrap.clientWidth||window.innerWidth)-24, 900);
+  const base=page.getViewport({scale:1});
+  const scale=Math.max(avail/base.width, 0.5);
+  const vp=page.getViewport({scale});
+  const canvas=document.createElement("canvas");
+  canvas.width=Math.floor(vp.width); canvas.height=Math.floor(vp.height);
+  canvas.className="pdf-canvas";
+  wrap.innerHTML=""; wrap.appendChild(canvas);
+  await page.render({canvasContext:canvas.getContext("2d"), viewport:vp}).promise;
+  document.getElementById("pdfPage").textContent=pdfPageNo;
+}
+function pdfNext(){ if(pdfDoc && pdfPageNo<pdfDoc.numPages){ pdfPageNo++; renderPdfPage(); } }
+function pdfPrev(){ if(pdfDoc && pdfPageNo>1){ pdfPageNo--; renderPdfPage(); } }
+function closePdf(){ document.getElementById("pdfReader").classList.remove("show"); pdfDoc=null; }
+
+/* reader controls + swipe (right-to-left swipe = next page) */
+document.getElementById("pdfClose").onclick=closePdf;
+document.getElementById("pdfNext").onclick=pdfNext;
+document.getElementById("pdfPrev").onclick=pdfPrev;
+(function(){
+  const ov=document.getElementById("pdfReader");
+  let sx=0, sy=0, active=false;
+  ov.addEventListener("touchstart", e=>{ if(e.touches.length!==1) return; sx=e.touches[0].clientX; sy=e.touches[0].clientY; active=true; }, {passive:true});
+  ov.addEventListener("touchend", e=>{
+    if(!active) return; active=false;
+    const t=e.changedTouches[0];
+    const dx=t.clientX-sx, dy=t.clientY-sy;
+    if(Math.abs(dx)>45 && Math.abs(dx)>Math.abs(dy)){ if(dx<0) pdfNext(); else pdfPrev(); }
+  }, {passive:true});
+})();
+document.addEventListener("keydown", e=>{
+  const ov=document.getElementById("pdfReader");
+  if(!ov.classList.contains("show")) return;
+  if(e.key==="ArrowRight"||e.key==="ArrowDown") pdfNext();
+  if(e.key==="ArrowLeft"||e.key==="ArrowUp") pdfPrev();
+  if(e.key==="Escape") closePdf();
+});
+window.addEventListener("resize", ()=>{ const ov=document.getElementById("pdfReader"); if(ov.classList.contains("show") && pdfDoc) renderPdfPage(); });
 
 /* ============================================================
    EVENT DELEGATION
@@ -560,6 +742,8 @@ document.addEventListener("click", async (e)=>{
     return;
   }
 
+  if(act==="open-pdf") return openPdfReader(actEl.getAttribute("data-url"));
+
   if(act==="post") return createPost();
 
   if(act==="like"){
@@ -608,7 +792,10 @@ document.addEventListener("click", async (e)=>{
     if(!user) return;
     if(!confirm("Ye post delete karein?")) return;
     const p=posts.find(x=>x.id===id);
-    if(p && p.media_path){ try{ await sb.storage.from("media").remove([p.media_path]); }catch(e){} }
+    if(p){
+      const paths=(Array.isArray(p.media)&&p.media.length)?p.media.map(m=>m.path).filter(Boolean):(p.media_path?[p.media_path]:[]);
+      if(paths.length){ try{ await sb.storage.from("media").remove(paths); }catch(e){} }
+    }
     const { error }=await sb.from("posts").delete().eq("id",id);
     if(error) return toast(error.message);
     toast("Post delete ho gaya"); await loadFeed();
