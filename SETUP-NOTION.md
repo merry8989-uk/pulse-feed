@@ -88,9 +88,16 @@ aana chahiye jisme counters, web vitals, attempts aur saare events honge.
 - **Session end** pe (user tab hide/close kare) — ek baar.
 - **Manual** — Diagnostics me “Send to Notion” button.
 
-Har bhejne pe **ek naya row** banta hai (same session ke ek se zyada rows ho
-sakte hain — reason column se pata chalta hai). Notion API ~3 request/sec allow
-karta hai, isliye per-event nahi, per-report bheja jaata hai.
+**Ek session = ek row.** Pehli baar naya row banta hai; uske baad **wahi row
+update** hoti hai (counters/vitals refresh) aur naye events us page me **append**
+hote hain — duplicate rows nahi bante. Notion API ~3 req/sec allow karta hai,
+isliye per-event nahi, per-report bheja jaata hai.
+
+## Views (pehle se bane hue)
+
+- **By user** — table, `User` se grouped (har user ka apna group).
+- **By network** — board, `Network` se grouped.
+- **With errors** — sirf woh sessions jahan `Errors > 0`.
 
 ## Zaroori baatein
 
