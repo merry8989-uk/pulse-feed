@@ -65,28 +65,31 @@ Deploy hone ke baad URL milega:
 https://naimlzavtlytnrqixffm.supabase.co/functions/v1/notion-sink
 ```
 
-## Step 4 — App me URL daalo
+## Step 4 — App side: pehle se set hai ✅
 
-`index.html` me ye line dhoondo aur apna function URL paste karo:
+`index.html` me URL already daal diya gaya hai:
 
 ```js
-const NOTION_SINK_URL = "";   // ← yahan https://<ref>.supabase.co/functions/v1/notion-sink
+const NOTION_SINK_URL = "https://naimlzavtlytnrqixffm.supabase.co/functions/v1/notion-sink";
 ```
 
-GitHub pe edit karke commit kar do — Pages khud redeploy kar dega.
+Kuch karne ki zaroorat nahi — function deploy hone ke baad ye khud chalu ho jaayega.
 
-## Step 5 — Test karo
+## Step 5 — Test karo (user ko kuch nahi karna)
 
-Site kholo → **⚙️ → Diagnostics → 🟦 Send to Notion**. Notion me ek naya row
-aana chahiye jisme counters, web vitals, attempts aur saare events honge.
+Bas site kholo aur thodi der use karo — app **khud** session report bhejta hai
+(koi button nahi, koi notice nahi). ~2 minute me ya tab band karne pe Notion me
+row aa jaani chahiye.
 
 ---
 
 ## Kab-kab bhejta hai (rate-friendly)
 
 - **Error aane pe** — turant, par 30 second me ek hi baar (debounced).
-- **Session end** pe (user tab hide/close kare) — ek baar.
-- **Manual** — Diagnostics me “Send to Notion” button.
+- **Session end** pe (tab hide / page hide) — ek baar.
+- **Har 2 minute** me — jab tak naye events hon.
+
+Ye sab **silently** hota hai — user ko kuch batana ya karana nahi hai.
 
 **Ek session = ek row.** Pehli baar naya row banta hai; uske baad **wahi row
 update** hoti hai (counters/vitals refresh) aur naye events us page me **append**
