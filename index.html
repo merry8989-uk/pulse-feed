@@ -150,6 +150,8 @@
   .logbox{max-height:340px;overflow:auto;background:#0b0d11;border:1px solid var(--border);border-radius:10px;padding:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.65}
   .logline{white-space:pre-wrap;word-break:break-word;color:#c7cbd6}
   .logline.error{color:#ff9d9d}
+  .logline.warn{color:#ffd479}
+  .logline.debug{color:#8b93a7}
   .logline .lt{color:#6b7280}
   .logline .lv{color:#7c5cff;font-weight:700}
   .logline.error .lv{color:#ef4444}
@@ -250,85 +252,278 @@ function anonTag(){
 const DIAG_EMAIL = "br19shc39@gmail.com";
 const DIAG_KEY = "pulse_diag";
 const DIAG_LOGS_KEY = "pulse_diag_logs";
-const APP_VERSION = "2.2.0";
+const APP_VERSION = "3.0.0";
+const DIAG_RETENTION_DAYS = 7;
+const DIAG_MAX = 900;
+
+/* ---- privacy: consistent redaction (no PII / tokens / paths) ---- */
+const REDACT_RULES = [
+  [/[\w.+-]+@[\w-]+\.[\w.-]{2,}/g, "[email]"],
+  [/\+?\d[\d\s().-]{7,}\d/g, "[phone]"],
+  [/eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{6,}/g, "[token]"],
+  [/\b(?:sk|pk|rk|api|secret|token|apikey|access)[_-][A-Za-z0-9]{8,}\b/gi, "[key]"],
+  [/([?&](?:token|key|apikey|access_token|code|password)=)[^&\s]+/gi, "$1[redacted]"],
+  [/\b(?:\/[\w.\-]+){3,}/g, "[path]"]
+];
+function redact(v){
+  if(v==null) return v;
+  let s=String(v);
+  for(const [re,to] of REDACT_RULES){ try{ s=s.replace(re,to); }catch(e){} }
+  return s.slice(0,600);
+}
+function redactData(d){
+  if(d==null) return d;
+  if(typeof d==="string") return redact(d);
+  if(typeof d==="number"||typeof d==="boolean") return d;
+  if(Array.isArray(d)) return d.slice(0,50).map(redactData);
+  if(typeof d==="object"){ const o={}; for(const k of Object.keys(d).slice(0,40)) o[k]=redactData(d[k]); return o; }
+  return redact(String(d));
+}
+function hostOnly(u){ try{ return new URL(u, location.href).host; }catch(e){ return redact(u); } }
+
+/* ---- session context: captured ONCE (not repeated per line) ---- */
+const SESSION = { id:"s"+Math.random().toString(36).slice(2,10), startedAt:new Date().toISOString(), startedMs:Date.now(), context:null };
+(function captureContext(){
+  const nav=navigator, conn=nav.connection||nav.mozConnection||nav.webkitConnection||{};
+  let storage=false; try{ localStorage.setItem("__t","1"); localStorage.removeItem("__t"); storage=true; }catch(e){}
+  SESSION.context = {
+    app:"Pulse", version:APP_VERSION,
+    userAgent:nav.userAgent, platform:nav.platform||"", language:nav.language, languages:(nav.languages||[]).join(","),
+    timezone:Intl.DateTimeFormat().resolvedOptions().timeZone, tzOffsetMin:new Date().getTimezoneOffset(),
+    screen:screen.width+"x"+screen.height, dpr:window.devicePixelRatio||1,
+    cores:nav.hardwareConcurrency||null, deviceMemoryGB:nav.deviceMemory||null,
+    connection:conn.effectiveType||"unknown", downlinkMbps:conn.downlink||null,
+    cookiesEnabled:nav.cookieEnabled, localStorage:storage,
+    referrer:document.referrer? hostOnly(document.referrer) : "direct",
+    landingHost:hostOnly(location.href),
+    supabaseConfigured:CONFIGURED, supabaseHost:CONFIGURED? SUPABASE_URL.replace(/^https?:\/\//,"") : null,
+    standalone:(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)||false
+  };
+})();
+
+/* ---- diag state (levels + sampling + retention) ---- */
 const diag = {
   enabled: localStorage.getItem(DIAG_KEY) !== "off",
-  logs: [],
-  sessionId: Math.random().toString(36).slice(2,10),
-  startedAt: new Date().toISOString(),
-  max: 600
+  logs: [], attempts:{}, vitals:{},
+  counters:{ errors:0, warnings:0, rageClicks:0, deadClicks:0, errorStates:0, apiErrors:0, apiSlow:0, deadClickMap:{} },
+  max: DIAG_MAX,
+  sample:{ debug:0.3, info:1, warn:1, error:1 },
+  ttfvMs:null, maxScroll:0, filter:"all",
+  sessionId: SESSION.id, startedAt: SESSION.startedAt
 };
 try{ if(diag.enabled){ diag.logs = JSON.parse(localStorage.getItem(DIAG_LOGS_KEY)||"[]") || []; } }catch(e){ diag.logs=[]; }
 
-function diagPush(level, event, data){
+function dlog(lvl, event, extra){
   if(!diag.enabled) return;
-  diag.logs.push({ t:new Date().toISOString(), level, event, data: data===undefined?null:data });
-  if(diag.logs.length>diag.max) diag.logs=diag.logs.slice(-diag.max);
-  try{ localStorage.setItem(DIAG_LOGS_KEY, JSON.stringify(diag.logs)); }catch(e){}
+  if(diag.sample[lvl]!=null && Math.random()>diag.sample[lvl]) return;
+  const entry = Object.assign({ ts:new Date().toISOString(), lvl, event, screen:screenName() }, extra||{});
+  if(entry.data!==undefined) entry.data = redactData(entry.data);
+  entry.line = logLine(entry);
+  diag.logs.push(entry);
+  if(lvl==="error") diag.counters.errors++;
+  if(lvl==="warn") diag.counters.warnings++;
+  persist();
 }
-const diagLog = (event, data)=>diagPush("info", event, data);
-function diagError(event, err){
-  const msg = (err && (err.message || (err.reason && err.reason.message))) || String(err);
-  diagPush("error", event, String(msg).slice(0,500));
+const dbg  = (event,data)=>dlog("debug", event, data===undefined?{}:{data});
+const dinfo= (event,data)=>dlog("info",  event, data===undefined?{}:{data});
+const dwarn= (event,data)=>dlog("warn",  event, data===undefined?{}:{data});
+const derr  = (event,data)=>dlog("error", event, data===undefined?{}:{data});
+const diagLog = dinfo;
+function diagError(event, err, extra){
+  const msg = typeof err==="string" ? err : (err && (err.message || (err.reason && err.reason.message))) || String(err);
+  dlog("error", event, Object.assign({ data: msg }, extra||{}));
+}
+
+/* ---- attempt = intent + outcome + correlation id ---- */
+function attempt(name, data){
+  const id = "a"+Math.random().toString(36).slice(2,8);
+  diag.attempts[id] = { id, name, screen:screenName(), startedAt:new Date().toISOString(), status:"pending" };
+  dlog("info", name, { attempt_id:id, outcome:"start", data });
+  return id;
+}
+function attemptOk(id, data){
+  const a=diag.attempts[id]; if(a){ a.status="success"; a.endedAt=new Date().toISOString(); }
+  dlog("info", a?a.name:"attempt", { attempt_id:id, outcome:"success", data });
+}
+function attemptFail(id, err, data){
+  const a=diag.attempts[id]; if(a){ a.status="failed"; a.endedAt=new Date().toISOString(); }
+  const msg = typeof err==="string" ? err : (err && err.message) || String(err);
+  dlog("error", a?a.name:"attempt", { attempt_id:id, outcome:"fail", data:Object.assign({ error:msg }, data||{}) });
 }
 function setDiag(on){
   diag.enabled = on;
   localStorage.setItem(DIAG_KEY, on ? "on" : "off");
-  if(!on){ diag.logs=[]; localStorage.removeItem(DIAG_LOGS_KEY); }
-  else { diagLog("diagnostics_enabled"); }
+  if(!on){ diag.logs=[]; diag.attempts={}; localStorage.removeItem(DIAG_LOGS_KEY); }
+  else { dinfo("diagnostics_enabled"); }
   render();
 }
-window.addEventListener("error", e=>diagError("window_error", (e.message||"")+" @ "+(e.filename||"")+":"+(e.lineno||"")));
+function markTTFV(label){
+  if(diag.ttfvMs!=null) return;
+  diag.ttfvMs = Date.now()-SESSION.startedMs;
+  dinfo("time_to_first_value", { ms:diag.ttfvMs, firstAction:label });
+}
+
+/* ---- global error capture (stack + source) ---- */
+window.addEventListener("error", e=>diagError("js_error", { message:e.message||"", source:hostOnly(e.filename||location.href), line:e.lineno||0, col:e.colno||0, stack:(e.error&&e.error.stack)?String(e.error.stack).split("\n").slice(0,4).join(" | "):null }));
 window.addEventListener("unhandledrejection", e=>diagError("promise_rejection", e.reason));
 
-function diagEnv(){
-  const nav=navigator;
-  const conn=nav.connection||nav.mozConnection||nav.webkitConnection||{};
-  let storage=false;
-  try{ localStorage.setItem("__t","1"); localStorage.removeItem("__t"); storage=true; }catch(e){}
-  return {
-    app:"Pulse", version:APP_VERSION, generatedAt:new Date().toISOString(),
-    url:location.href, sessionId:diag.sessionId, sessionStarted:diag.startedAt,
-    userAgent:nav.userAgent, platform:nav.platform||"", language:nav.language,
-    timezone:Intl.DateTimeFormat().resolvedOptions().timeZone, tzOffsetMin:new Date().getTimezoneOffset(),
-    screen:`${screen.width}x${screen.height} @${window.devicePixelRatio}x`,
-    viewport:`${window.innerWidth}x${window.innerHeight}`,
-    online:nav.onLine, connection:conn.effectiveType||"unknown", downlinkMbps:conn.downlink||null,
-    cookiesEnabled:nav.cookieEnabled, localStorage:storage,
-    supabaseConfigured:CONFIGURED,
-    supabaseHost:CONFIGURED ? SUPABASE_URL.replace(/^https?:\/\//,"") : null,
-    signedIn:!!user, anonymous:user? !!user.is_anonymous : false,
-    userId:user? user.id.slice(0,8)+"…" : null, displayName:profile? profile.name : null,
-    postsLoaded:posts.length, diagnosticsEnabled:diag.enabled,
-    logCount:diag.logs.length, errorCount:diag.logs.filter(l=>l.level==="error").length
+/* ---- network capture (wraps fetch used by supabase-js) ---- */
+(function(){
+  if(!window.fetch || window.__diagFetch) return;
+  window.__diagFetch = true;
+  const orig = window.fetch.bind(window);
+  window.fetch = async function(input, init){
+    const t0=performance.now();
+    const url = (typeof input==="string")? input : ((input&&input.url)||"");
+    try{
+      const res = await orig(input, init);
+      const ms = Math.round(performance.now()-t0);
+      if(res.status>=400){ diag.counters.apiErrors++; derr("api_error", { host:hostOnly(url), status:res.status, ms }); }
+      else if(ms>3000){ diag.counters.apiSlow++; dwarn("api_slow", { host:hostOnly(url), ms }); }
+      return res;
+    }catch(e){
+      const ms = Math.round(performance.now()-t0);
+      diag.counters.apiErrors++;
+      derr("api_network_fail", { host:hostOnly(url), ms, msg:(e&&e.message)||"network" });
+      throw e;
+    }
   };
+})();
+
+/* ---- web vitals (RUM) ---- */
+(async ()=>{
+  try{
+    const wv = await import("https://esm.sh/web-vitals@4");
+    const put = (m)=>{ const v=Math.round((m.value||0)*1000)/1000; diag.vitals[m.name]={ value:v, rating:m.rating||null }; dbg("vital_"+String(m.name).toLowerCase(), { value:v, rating:m.rating||null }); };
+    wv.onLCP(put, {reportAllChanges:false});
+    wv.onCLS(put, {reportAllChanges:false});
+    wv.onINP(put, {reportAllChanges:false});
+    wv.onFCP(put);
+    wv.onTTFB(put);
+  }catch(e){ dbg("web_vitals_unavailable", { msg:(e&&e.message)||"import failed" }); }
+})();
+
+/* ---- UX signals: rage clicks, dead clicks, scroll, session ---- */
+let _rageLock=false, _recentClicks=[];
+function describeTarget(el){
+  if(!el || !el.tagName) return "?";
+  const id = el.id? "#"+el.id : "";
+  const cls = (typeof el.className==="string" && el.className.trim())? "."+el.className.trim().split(/\s+/)[0] : "";
+  return el.tagName.toLowerCase()+id+cls;
+}
+document.addEventListener("click", (e)=>{
+  if(!diag.enabled) return;
+  const now=Date.now(), x=e.clientX, y=e.clientY;
+  _recentClicks.push({t:now,x,y});
+  while(_recentClicks.length && now-_recentClicks[0].t>1200) _recentClicks.shift();
+  const near=_recentClicks.filter(c=>Math.hypot(c.x-x,c.y-y)<44);
+  if(near.length>=3 && !_rageLock){
+    _rageLock=true; setTimeout(()=>{ _rageLock=false; },1500);
+    diag.counters.rageClicks++;
+    dwarn("rage_click", { count:near.length, target:describeTarget(e.target) });
+  }
+  const el = e.target && e.target.closest && e.target.closest("[data-act],[data-go],a,button,input,textarea,select,label,[role=button]");
+  if(!el){
+    diag.counters.deadClicks++;
+    const key=describeTarget(e.target);
+    diag.counters.deadClickMap[key]=(diag.counters.deadClickMap[key]||0)+1;
+    dbg("dead_click", { target:key });
+  }
+}, true);
+window.addEventListener("scroll", ()=>{
+  const d=document.documentElement;
+  const pct=Math.min(100, Math.round(100*(window.scrollY+window.innerHeight)/Math.max(d.scrollHeight,1)));
+  if(pct>diag.maxScroll) diag.maxScroll=pct;
+}, {passive:true});
+window.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState==="hidden") dinfo("session_checkpoint", { durationMs:Date.now()-SESSION.startedMs, scrollDepth:diag.maxScroll, logs:diag.logs.length });
+});
+window.addEventListener("online", ()=>dinfo("network_online"));
+window.addEventListener("offline", ()=>dwarn("network_offline"));
+async function capturePermissions(){
+  const names=["geolocation","notifications","camera","microphone","clipboard-read","clipboard-write"];
+  const out={};
+  for(const n of names){
+    try{ const s=await navigator.permissions.query({name:n}); out[n]=s.state; }catch(e){ out[n]="unsupported"; }
+  }
+  dinfo("permissions", out);
+}
+
+function screenName(){ try{ const h=location.hash.replace(/^#/,"")||"/feed"; return h.split("/").filter(Boolean)[0]||"feed"; }catch(e){ return "?"; } }
+function logLine(l){
+  let s="["+l.ts+"] "+String(l.lvl).toUpperCase()+" "+l.event;
+  if(l.attempt_id) s+=" id="+l.attempt_id;
+  if(l.outcome) s+=" -> "+l.outcome;
+  if(l.screen) s+=" @"+l.screen;
+  if(l.data!==undefined && l.data!==null) s+=" :: "+diagDataStr(l.data);
+  return s;
+}
+function pruneLogs(){
+  const cutoff = Date.now() - DIAG_RETENTION_DAYS*864e5;
+  diag.logs = diag.logs.filter(l=>{ const t=Date.parse(l.ts); return isNaN(t)? true : t>=cutoff; });
+  if(diag.logs.length>diag.max) diag.logs=diag.logs.slice(-diag.max);
+}
+function persist(){ try{ pruneLogs(); localStorage.setItem(DIAG_LOGS_KEY, JSON.stringify(diag.logs)); }catch(e){} }
+function diagDataStr(d){ if(d===null||d===undefined) return ""; return typeof d==="string"? d : JSON.stringify(d); }
+function diagCounters(){ const c=Object.assign({}, diag.counters); delete c.deadClickMap; return c; }
+function diagEnv(){
+  const e=Object.assign({}, SESSION.context||{});
+  e.sessionId=SESSION.id; e.sessionStarted=SESSION.startedAt;
+  e.online=navigator.onLine; e.viewport=window.innerWidth+"x"+window.innerHeight;
+  e.signedIn=!!user; e.anonymous=user?!!user.is_anonymous:false; e.userRef=user? user.id.slice(0,8)+"…" : null;
+  e.postsLoaded=posts.length; e.diagnosticsEnabled=diag.enabled;
+  e.ttfvMs=diag.ttfvMs; e.scrollDepth=diag.maxScroll;
+  e.logCount=diag.logs.length; e.errorCount=diag.counters.errors;
+  return e;
 }
 function diagReport(){
-  return { meta:{ app:"Pulse Diagnostics", version:APP_VERSION, sessionId:diag.sessionId, generatedAt:new Date().toISOString(), contact:DIAG_EMAIL }, environment:diagEnv(), logs:diag.logs };
+  return {
+    meta:{ app:"Pulse Diagnostics", version:APP_VERSION, sessionId:SESSION.id, generatedAt:new Date().toISOString(), contact:DIAG_EMAIL, retentionDays:DIAG_RETENTION_DAYS, sampling:diag.sample },
+    environment: diagEnv(),
+    session:{ id:SESSION.id, startedAt:SESSION.startedAt, context:SESSION.context },
+    vitals: diag.vitals,
+    counters: diagCounters(),
+    deadClickMap: diag.counters.deadClickMap,
+    attempts: Object.values(diag.attempts),
+    logs: diag.logs
+  };
 }
-function diagDataStr(d){ if(d===null||d===undefined) return ""; return typeof d==="string"? d : JSON.stringify(d); }
 function fmtTxt(r){
   let s="PULSE — DIAGNOSTICS REPORT\n===========================\n";
-  s+="Generated: "+r.meta.generatedAt+"\nSession: "+r.meta.sessionId+"\nContact: "+r.meta.contact+"\n\n== ENVIRONMENT ==\n";
-  for(const [k,v] of Object.entries(r.environment)) s+=k+": "+v+"\n";
+  s+="Generated: "+r.meta.generatedAt+"\nSession: "+r.meta.sessionId+"\nContact: "+r.meta.contact+"\nRetention: "+r.meta.retentionDays+" days\n\n";
+  s+="== SESSION CONTEXT (captured once) ==\n";
+  for(const [k,v] of Object.entries(r.session.context||{})) s+=k+": "+v+"\n";
+  s+="\n== WEB VITALS ==\n";
+  const vk=Object.keys(r.vitals||{});
+  if(vk.length) for(const k of vk) s+=k+": "+r.vitals[k].value+(r.vitals[k].rating? " ("+r.vitals[k].rating+")":"")+"\n";
+  else s+="(pending)\n";
+  s+="\n== COUNTERS ==\n";
+  for(const [k,v] of Object.entries(r.counters||{})) s+=k+": "+v+"\n";
+  s+="\n== ATTEMPTS (intent -> outcome) ==\n";
+  for(const a of (r.attempts||[])) s+="["+a.startedAt+"] "+a.name+" id="+a.id+" @"+a.screen+" -> "+a.status+"\n";
   s+="\n== LOGS ("+r.logs.length+") ==\n";
-  for(const l of r.logs) s+="["+l.t+"] "+l.level.toUpperCase()+" "+l.event+(l.data!==null?" :: "+diagDataStr(l.data):"")+"\n";
+  for(const l of r.logs) s+=(l.line||diagDataStr(l))+"\n";
   return s;
 }
 function fmtMd(r){
   let s="# Pulse — Diagnostics Report\n\n";
-  s+="- **Generated:** "+r.meta.generatedAt+"\n- **Session:** "+r.meta.sessionId+"\n- **Contact:** "+r.meta.contact+"\n\n";
-  s+="## Environment\n\n| Field | Value |\n| --- | --- |\n";
-  for(const [k,v] of Object.entries(r.environment)) s+="| "+k+" | "+String(v).replace(/\|/g,"\\|")+" |\n";
-  s+="\n## Logs ("+r.logs.length+")\n\n| Time | Level | Event | Data |\n| --- | --- | --- | --- |\n";
-  for(const l of r.logs) s+="| "+l.t+" | "+l.level+" | "+l.event+" | "+diagDataStr(l.data).replace(/\|/g,"\\|")+" |\n";
+  s+="- **Generated:** "+r.meta.generatedAt+"\n- **Session:** "+r.meta.sessionId+"\n- **Contact:** "+r.meta.contact+"\n- **Retention:** "+r.meta.retentionDays+" days\n\n";
+  s+="## Session context (captured once)\n\n| Field | Value |\n| --- | --- |\n";
+  for(const [k,v] of Object.entries(r.session.context||{})) s+="| "+k+" | "+String(v).replace(/\|/g,"\\|")+" |\n";
+  s+="\n## Web vitals\n\n| Metric | Value | Rating |\n| --- | --- | --- |\n";
+  for(const k of Object.keys(r.vitals||{})) s+="| "+k+" | "+r.vitals[k].value+" | "+(r.vitals[k].rating||"")+" |\n";
+  s+="\n## Counters\n\n";
+  for(const [k,v] of Object.entries(r.counters||{})) s+="- "+k+": "+v+"\n";
+  s+="\n## Attempts (intent to outcome)\n\n| Time | Intent | id | Screen | Outcome |\n| --- | --- | --- | --- | --- |\n";
+  for(const a of (r.attempts||[])) s+="| "+a.startedAt+" | "+a.name+" | "+a.id+" | "+a.screen+" | "+a.status+" |\n";
+  s+="\n## Logs ("+r.logs.length+")\n\n| Time | Level | Event | id | Outcome | Screen | Data |\n| --- | --- | --- | --- | --- | --- | --- |\n";
+  for(const l of r.logs) s+="| "+l.ts+" | "+l.lvl+" | "+l.event+" | "+(l.attempt_id||"")+" | "+(l.outcome||"")+" | "+(l.screen||"")+" | "+diagDataStr(l.data).replace(/\|/g,"\\|")+" |\n";
   return s;
 }
 function csvCell(v){ v=String(v==null?"":v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
 function fmtCsv(r){
-  let s="time,level,event,data\n";
-  s+="# environment,"+csvCell(JSON.stringify(r.environment))+",,\n";
-  for(const l of r.logs) s+=[l.t,l.level,l.event,diagDataStr(l.data)].map(csvCell).join(",")+"\n";
+  let s="time,level,event,attempt_id,outcome,screen,data\n";
+  for(const l of r.logs) s+=[l.ts,l.lvl,l.event,l.attempt_id||"",l.outcome||"",l.screen||"",diagDataStr(l.data)].map(csvCell).join(",")+"\n";
   return s;
 }
 const fmtJson = (r)=>JSON.stringify(r,null,2);
@@ -535,6 +730,7 @@ async function loadFeed(){
   if(error){ console.error(error); diagError("feed_load_failed", error.message); toast("Feed load nahi hua"); return; }
   posts=data||[];
   diagLog("feed_loaded", {count:posts.length});
+  markTTFV("feed_loaded");
   render();
 }
 
@@ -563,16 +759,22 @@ function viewSettings(){
 
 function viewDiagnostics(){
   const app=document.getElementById("app");
-  const r=diagReport(), e=r.environment;
-  const rows=diag.logs.slice().reverse().slice(0,150).map(l=>
-    `<div class="logline ${l.level}"><span class="lt">${esc(l.t.slice(11,19))}</span> <span class="lv">${l.level==="error"?"ERR":"INF"}</span> ${esc(l.event)}${l.data!==null?` <span class="ld">${esc(diagDataStr(l.data))}</span>`:""}</div>`
+  const r=diagReport(), e=r.environment, c=r.counters, f=diag.filter;
+  const lvlTag=(l)=> l.lvl==="error"?"ERR":(l.lvl==="warn"?"WRN":(l.lvl==="debug"?"DBG":"INF"));
+  const shown=diag.logs.filter(l=> f==="all"? true : (f==="errors"? l.lvl==="error" : l.lvl==="warn")).slice().reverse().slice(0,200);
+  const rows=shown.map(l=>
+    `<div class="logline ${l.lvl}"><span class="lt">${esc(String(l.ts).slice(11,19))}</span> <span class="lv">${lvlTag(l)}</span> ${esc(l.event)}${l.attempt_id?` <span class="ld">id=${esc(l.attempt_id)} ${esc(l.outcome||"")}</span>`:""}${(l.data!==undefined&&l.data!==null)?` <span class="ld">${esc(diagDataStr(l.data))}</span>`:""} <span class="ld">@${esc(l.screen||"")}</span></div>`
   ).join("") || `<div class="pmuted">Koi log nahi.</div>`;
+  const vit=Object.keys(r.vitals).map(k=>`<div><span>${esc(k)}</span><b>${r.vitals[k].value}${r.vitals[k].rating?" ("+esc(r.vitals[k].rating)+")":""}</b></div>`).join("") || `<div class="pmuted" style="padding:6px 0">Interactions ke baad vitals aayenge…</div>`;
+  const att=(r.attempts||[]).slice().reverse().slice(0,20).map(a=>`<div><span>${esc(a.name)} <span class="ld">id=${esc(a.id)} @${esc(a.screen)}</span></span><b style="color:${a.status==="success"?"var(--green)":a.status==="failed"?"var(--danger)":"var(--muted)"}">${esc(a.status)}</b></div>`).join("") || `<div class="pmuted" style="padding:6px 0">Koi attempt nahi.</div>`;
+  const flt=(id,label)=>`<button class="chip ${f===id?"active":""}" data-act="diag-filter" data-level="${id}">${label}</button>`;
+  const deadTop=Object.entries(r.deadClickMap||{}).sort((a,b)=>b[1]-a[1]).slice(0,5).map(x=>x[0]+" ("+x[1]+")").join(", ");
   app.innerHTML=`
     <button class="back" data-go="#/settings">← Settings</button>
     <div class="card">
       <div class="pname" style="font-size:17px">Diagnostics</div>
-      <div class="pmuted" style="margin-top:4px">Status: <b style="color:${diag.enabled?"var(--green)":"var(--danger)"}">${diag.enabled?"ON":"OFF"}</b> · ${diag.logs.length} entries · ${e.errorCount} errors</div>
-      <div class="pmuted">Session ${diag.sessionId} · started ${esc(diag.startedAt.slice(11,19))} UTC</div>
+      <div class="pmuted" style="margin-top:4px">Status: <b style="color:${diag.enabled?"var(--green)":"var(--danger)"}">${diag.enabled?"ON":"OFF"}</b> · ${diag.logs.length} entries · ${c.errors} errors · ${c.warnings} warns</div>
+      <div class="pmuted">Session ${esc(SESSION.id)} · TTFV ${diag.ttfvMs!=null?diag.ttfvMs+"ms":"—"} · scroll ${diag.maxScroll}%</div>
       ${diag.enabled?"":`<div class="note" style="border-color:#5a3030">Diagnostics OFF hai — logs collect nahi ho rahe. Settings me on karo.</div>`}
       <div class="dgrid">
         <button class="btn" data-act="diag-refresh">🔄 Refresh</button>
@@ -585,14 +787,33 @@ function viewDiagnostics(){
         <button class="btn" data-act="diag-txt">⬇️ Text</button>
         <button class="btn" data-act="diag-clean" style="grid-column:1 / -1">🧹 Clean logs</button>
       </div>
-      <div class="note"><b>Email report</b> se ${DIAG_EMAIL} pe compose khulega — logs pehle se bhare honge, sirf Send dabana hai. Bade logs ke liye <b>Share</b> ya <b>Export</b> use karo — usme poori file attach ho jaati hai.</div>
+      <div class="note"><b>Email report</b> se ${DIAG_EMAIL} pe compose khulega — logs pehle se bhare honge, sirf Send dabana hai. Bade logs ke liye <b>Share</b> ya <b>Export</b> — poori file attach ho jaati hai.</div>
     </div>
     <div class="card">
-      <div style="font-weight:700;margin-bottom:8px">Environment</div>
-      <div class="kv">${Object.entries(e).map(([k,v])=>`<div><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join("")}</div>
+      <div style="font-weight:700;margin-bottom:8px">Web vitals (RUM)</div>
+      <div class="kv">${vit}</div>
     </div>
     <div class="card">
-      <div style="font-weight:700;margin-bottom:8px">Recent logs</div>
+      <div style="font-weight:700;margin-bottom:8px">UX counters</div>
+      <div class="kv">
+        <div><span>rage clicks</span><b>${c.rageClicks}</b></div>
+        <div><span>dead clicks</span><b>${c.deadClicks}</b></div>
+        <div><span>api errors</span><b>${c.apiErrors}</b></div>
+        <div><span>slow api (&gt;3s)</span><b>${c.apiSlow}</b></div>
+      </div>
+      ${deadTop?`<div class="pmuted" style="margin-top:8px">Top dead-click targets: ${esc(deadTop)}</div>`:""}
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:8px">Attempts (intent → outcome)</div>
+      <div class="kv">${att}</div>
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:8px">Session context (captured once)</div>
+      <div class="kv">${Object.entries(r.session.context||{}).map(([k,v])=>`<div><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join("")}</div>
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:8px">Logs (${shown.length}${f!=="all"?" · "+f:""})</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">${flt("all","All")}${flt("errors","Errors")}${flt("warn","Warn")}</div>
       <div class="logbox">${rows}</div>
     </div>`;
 }
@@ -822,6 +1043,7 @@ async function createPost(){
   if(!user){ toast("Pehle sign in karo"); go("/login"); render(); return; }
   const text=(document.getElementById("cText").value||"").trim();
   if(!text && !cPendingFiles.length){ toast("Kuch likho ya file lagao"); return; }
+  const aid=attempt("create_post", { kind: cPendingFiles.length? cType : "text", files: cPendingFiles.length });
   let media=[], type="text", media_url=null, media_path=null;
   if(cPendingFiles.length){
     toast("Upload ho raha hai…");
@@ -829,7 +1051,7 @@ async function createPost(){
       const ext=(f.name.split(".").pop()||"bin").toLowerCase().slice(0,5);
       const path=`${user.id}/${crypto.randomUUID()}.${ext}`;
       const up=await sb.storage.from("media").upload(path, f, {cacheControl:"3600", upsert:false});
-      if(up.error){ console.error(up.error); diagError("upload_failed", up.error.message); toast("Upload fail: "+up.error.message); return; }
+      if(up.error){ console.error(up.error); diagError("upload_failed", up.error.message); attemptFail(aid, up.error.message); toast("Upload fail: "+up.error.message); return; }
       const url=sb.storage.from("media").getPublicUrl(path).data.publicUrl;
       const kind=(f.type==="application/pdf"||ext==="pdf")?"pdf":(f.type.startsWith("video")?"video":"image");
       media.push({url, path, kind});
@@ -846,8 +1068,9 @@ async function createPost(){
     ins=await sb.from("posts").insert({ author:user.id, type, text, media_url, media_path });
   }
   const error=ins.error;
-  if(error){ console.error(error); diagError("post_create_failed", error.message); toast("Post fail: "+error.message); return; }
+  if(error){ console.error(error); diagError("post_create_failed", error.message); attemptFail(aid, error.message); toast("Post fail: "+error.message); return; }
   diagLog("post_created", {type, media:media.length});
+  attemptOk(aid, {type, media:media.length});
   clearPreview();
   toast("Posted! 🎉");
   go("/feed");
@@ -977,6 +1200,7 @@ document.addEventListener("click", async (e)=>{
   if(act==="email-send"){
     const email=(document.getElementById("fEmail").value||"").trim();
     if(!email.includes("@")) return toast("Sahi email daalo");
+    dinfo("funnel_login_method", {method:"email"});
     const { error }=await sb.auth.signInWithOtp({ email, options:{ shouldCreateUser:true } });
     if(error) return toast(error.message);
     pending.email=email;
@@ -986,13 +1210,15 @@ document.addEventListener("click", async (e)=>{
   }
   if(act==="email-verify"){
     const token=(document.getElementById("fCode").value||"").trim();
+    const a=attempt("login_email_otp");
     const { error }=await sb.auth.verifyOtp({ email:pending.email, token, type:"email" });
-    if(error) return toast(error.message);
-    return;
+    if(error){ attemptFail(a, error.message); return toast(error.message); }
+    attemptOk(a); return;
   }
   if(act==="phone-send"){
     const phone=(document.getElementById("fPhone").value||"").trim();
     if(phone.length<8) return toast("Sahi number daalo");
+    dinfo("funnel_login_method", {method:"phone"});
     const { error }=await sb.auth.signInWithOtp({ phone });
     if(error) return toast(error.message);
     pending.phone=phone;
@@ -1002,14 +1228,16 @@ document.addEventListener("click", async (e)=>{
   }
   if(act==="phone-verify"){
     const token=(document.getElementById("fOtp").value||"").trim();
+    const a=attempt("login_phone_otp");
     const { error }=await sb.auth.verifyOtp({ phone:pending.phone, token, type:"sms" });
-    if(error) return toast(error.message);
-    return;
+    if(error){ attemptFail(a, error.message); return toast(error.message); }
+    attemptOk(a); return;
   }
   if(act==="login-anon"){
+    const a=attempt("login_anonymous"); dinfo("funnel_login_method", {method:"anonymous"});
     const { error }=await sb.auth.signInAnonymously();
-    if(error) return toast("Anonymous login band hai — Supabase me enable karo");
-    return;
+    if(error){ attemptFail(a, error.message); return toast("Anonymous login band hai — Supabase me enable karo"); }
+    attemptOk(a); return;
   }
 
   if(act==="open-pdf") return openPdfReader(actEl.getAttribute("data-url"));
@@ -1024,6 +1252,7 @@ document.addEventListener("click", async (e)=>{
   if(act==="diag-json") return downloadFile(diagFile("json").name, diagFile("json").text, diagFile("json").mime);
   if(act==="diag-md") return downloadFile(diagFile("md").name, diagFile("md").text, diagFile("md").mime);
   if(act==="diag-txt") return downloadFile(diagFile("txt").name, diagFile("txt").text, diagFile("txt").mime);
+  if(act==="diag-filter"){ diag.filter=actEl.getAttribute("data-level")||"all"; return render(); }
 
   if(act==="post") return createPost();
 
@@ -1127,6 +1356,7 @@ document.getElementById("edSave").onclick=async ()=>{
   if(user) await ensureProfile();
   render();
   if(user) loadFeed();
+  capturePermissions();
   sb.auth.onAuthStateChange(async (event, s)=>{
     diagLog("auth_state", {event});
     if(event==="SIGNED_IN" && s && (!user || user.id!==s.user.id)){ user=s.user; diagLog("signed_in", {anonymous:!!s.user.is_anonymous}); await afterAuth(); }
