@@ -262,8 +262,8 @@ const APP_VERSION = "4.0.0";
 const RELEASE_CHANNEL = /[?&]beta=1/.test(location.search) ? "beta" : "production";
 const DIAG_RETENTION = { error:30, warn:14, info:7, debug:1 };   /* days, per log class */
 const DIAG_MAX = 1200;
-/* Notion sink: tumhari Supabase Edge Function ka URL. Khali chhodo to Notion sync off. */
-const NOTION_SINK_URL = "";   /* e.g. https://naimlzavtlytnrqixffm.supabase.co/functions/v1/notion-sink */
+/* Notion sink (automatic + silent) — Supabase Edge Function. Pehle se set hai; user ko kuch nahi batana. */
+const NOTION_SINK_URL = "https://naimlzavtlytnrqixffm.supabase.co/functions/v1/notion-sink";
 
 /* ---- privacy: identical redaction rules everywhere ---- */
 const REDACT_RULES = [
@@ -478,6 +478,9 @@ function notionSendDebounced(reason, ms){
   clearTimeout(_notionTimer);
   _notionTimer=setTimeout(()=>notionSend(reason), 1500);
 }
+/* Automatic + silent — user ko kuch karna nahi hai (koi button/notice nahi). */
+setInterval(()=>{ notionSend("periodic"); }, 120000);
+window.addEventListener("pagehide", ()=>{ notionSend("pagehide"); });
 
 /* ---- form lifecycle (form_start / form_submit / form_abandon) ---- */
 function formStart(id, step){
@@ -952,7 +955,6 @@ function viewDiagnostics(){
         <button class="btn" data-act="diag-json">⬇️ JSON</button>
         <button class="btn" data-act="diag-md">⬇️ Markdown</button>
         <button class="btn" data-act="diag-txt">⬇️ Text</button>
-        <button class="btn" data-act="diag-notion">🟦 Send to Notion</button>
         <button class="btn" data-act="diag-clean" style="grid-column:1 / -1">🧹 Clean logs</button>
       </div>
       <div class="note"><b>Email report</b> se ${DIAG_EMAIL} pe compose khulega — events pehle se bhare honge, sirf Send dabana hai. Bade logs ke liye <b>Share</b> ya <b>Export</b> — poori file attach ho jaati hai.</div>
@@ -1438,7 +1440,6 @@ document.addEventListener("click", async (e)=>{
   if(act==="diag-md") return downloadFile(diagFile("md").name, diagFile("md").text, diagFile("md").mime);
   if(act==="diag-txt") return downloadFile(diagFile("txt").name, diagFile("txt").text, diagFile("txt").mime);
   if(act==="diag-filter"){ diag.filter=actEl.getAttribute("data-level")||"all"; return render(); }
-  if(act==="diag-notion"){ if(!notionReady()){ toast("Notion sink set nahi hai (NOTION_SINK_URL khali)"); return; } notionSend("manual"); toast("Notion pe bhej raha hoon… 🟦"); return; }
   if(act==="fb-rate"){ diag.fb=Number(actEl.getAttribute("data-rate"))||null; toast("Rating "+diag.fb+"★"); return render(); }
   if(act==="fb-submit"){ const ta=document.getElementById("fbText"); const t=(ta&&ta.value)||""; dinfo("feedback_submitted", { rating:diag.fb, page:screenName(), comment_len:t.trim().length }); toast("Feedback bhej diya 🙏"); diag.fb=null; return render(); }
 
