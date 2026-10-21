@@ -262,6 +262,8 @@ const APP_VERSION = "4.0.0";
 const RELEASE_CHANNEL = /[?&]beta=1/.test(location.search) ? "beta" : "production";
 const DIAG_RETENTION = { error:30, warn:14, info:7, debug:1 };   /* days, per log class */
 const DIAG_MAX = 1200;
+/* Notion sink: tumhari Supabase Edge Function ka URL. Khali chhodo to Notion sync off. */
+const NOTION_SINK_URL = "";   /* e.g. https://naimlzavtlytnrqixffm.supabase.co/functions/v1/notion-sink */
 
 /* ---- privacy: identical redaction rules everywhere ---- */
 const REDACT_RULES = [
@@ -391,6 +393,7 @@ function dlog(log_level, event_name, opts){
   if(log_level==="error") diag.counters.errors++;
   if(log_level==="warn") diag.counters.warnings++;
   persist();
+  if(log_level==="error") notionSendDebounced("error");
 }
 const dbg  = (e,p)=>dlog("debug", e, p===undefined?{}:{properties:p});
 const dinfo= (e,p)=>dlog("info",  e, p===undefined?{}:{properties:p});
@@ -434,6 +437,28 @@ function markTTFV(label){
   if(diag.ttfvMs!=null) return;
   diag.ttfvMs = Date.now()-SESSION.startedMs;
   dinfo("time_to_first_value", { ms:diag.ttfvMs, first_action:label });
+}
+
+/* ---- Notion sink: session report → Notion (via secure Edge Function) ---- */
+let _notionLast=0, _notionTimer=null;
+function notionReady(){ return diag.enabled && NOTION_SINK_URL && NOTION_SINK_URL.indexOf("http")===0; }
+async function notionSend(reason){
+  if(!notionReady()) return;
+  let payload;
+  try{ payload = JSON.stringify({ reason, report: diagReport() }); }catch(e){ return; }
+  try{
+    const headers = { "Content-Type":"application/json" };
+    if(CONFIGURED && SUPABASE_ANON_KEY){ headers["Authorization"]="Bearer "+SUPABASE_ANON_KEY; headers["apikey"]=SUPABASE_ANON_KEY; }
+    await fetch(NOTION_SINK_URL, { method:"POST", headers, body:payload, keepalive:true });
+  }catch(e){ /* silent — diagnostics must never break the app */ }
+}
+function notionSendDebounced(reason, ms){
+  if(!notionReady()) return;
+  const now=Date.now();
+  if(now-_notionLast < (ms||30000)) return;
+  _notionLast=now;
+  clearTimeout(_notionTimer);
+  _notionTimer=setTimeout(()=>notionSend(reason), 1500);
 }
 
 /* ---- form lifecycle (form_start / form_submit / form_abandon) ---- */
@@ -542,6 +567,7 @@ window.addEventListener("visibilitychange", ()=>{
   if(document.visibilityState==="hidden"){
     formAbandonAll();
     dinfo("session_checkpoint", { duration_ms:Date.now()-SESSION.startedMs, scroll_depth:diag.maxScroll, log_count:diag.logs.length });
+    notionSend("session_end");
   }
 });
 window.addEventListener("online", ()=>dinfo("network_state", { network_type:networkType(), online:true }));
@@ -908,6 +934,7 @@ function viewDiagnostics(){
         <button class="btn" data-act="diag-json">⬇️ JSON</button>
         <button class="btn" data-act="diag-md">⬇️ Markdown</button>
         <button class="btn" data-act="diag-txt">⬇️ Text</button>
+        <button class="btn" data-act="diag-notion">🟦 Send to Notion</button>
         <button class="btn" data-act="diag-clean" style="grid-column:1 / -1">🧹 Clean logs</button>
       </div>
       <div class="note"><b>Email report</b> se ${DIAG_EMAIL} pe compose khulega — events pehle se bhare honge, sirf Send dabana hai. Bade logs ke liye <b>Share</b> ya <b>Export</b> — poori file attach ho jaati hai.</div>
@@ -1393,6 +1420,7 @@ document.addEventListener("click", async (e)=>{
   if(act==="diag-md") return downloadFile(diagFile("md").name, diagFile("md").text, diagFile("md").mime);
   if(act==="diag-txt") return downloadFile(diagFile("txt").name, diagFile("txt").text, diagFile("txt").mime);
   if(act==="diag-filter"){ diag.filter=actEl.getAttribute("data-level")||"all"; return render(); }
+  if(act==="diag-notion"){ if(!notionReady()){ toast("Notion sink set nahi hai (NOTION_SINK_URL khali)"); return; } notionSend("manual"); toast("Notion pe bhej raha hoon… 🟦"); return; }
   if(act==="fb-rate"){ diag.fb=Number(actEl.getAttribute("data-rate"))||null; toast("Rating "+diag.fb+"★"); return render(); }
   if(act==="fb-submit"){ const ta=document.getElementById("fbText"); const t=(ta&&ta.value)||""; dinfo("feedback_submitted", { rating:diag.fb, page:screenName(), comment_len:t.trim().length }); toast("Feedback bhej diya 🙏"); diag.fb=null; return render(); }
 
