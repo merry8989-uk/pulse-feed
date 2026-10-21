@@ -247,22 +247,30 @@ function anonTag(){
 }
 
 /* ============================================================
-   DIAGNOSTICS
+   DIAGNOSTICS — v4 · ProGallery shared event schema
+   Envelope fields on every event:
+   event_name, schema_version, timestamp, session_id, attempt_id,
+   user_id, platform, app_version, os, device_model, network_type,
+   screen_or_route, log_level, release_channel
    ============================================================ */
 const DIAG_EMAIL = "br19shc39@gmail.com";
 const DIAG_KEY = "pulse_diag";
 const DIAG_LOGS_KEY = "pulse_diag_logs";
-const APP_VERSION = "3.0.0";
-const DIAG_RETENTION_DAYS = 7;
-const DIAG_MAX = 900;
+const DIAG_SALT_KEY = "pulse_diag_salt";
+const SCHEMA_VERSION = "1.0.0";
+const APP_VERSION = "4.0.0";
+const RELEASE_CHANNEL = /[?&]beta=1/.test(location.search) ? "beta" : "production";
+const DIAG_RETENTION = { error:30, warn:14, info:7, debug:1 };   /* days, per log class */
+const DIAG_MAX = 1200;
 
-/* ---- privacy: consistent redaction (no PII / tokens / paths) ---- */
+/* ---- privacy: identical redaction rules everywhere ---- */
 const REDACT_RULES = [
   [/[\w.+-]+@[\w-]+\.[\w.-]{2,}/g, "[email]"],
   [/\+?\d[\d\s().-]{7,}\d/g, "[phone]"],
   [/eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{6,}/g, "[token]"],
   [/\b(?:sk|pk|rk|api|secret|token|apikey|access)[_-][A-Za-z0-9]{8,}\b/gi, "[key]"],
   [/([?&](?:token|key|apikey|access_token|code|password)=)[^&\s]+/gi, "$1[redacted]"],
+  [/\b[\w-]+\.(?:jpe?g|png|gif|webp|mp4|mov|webm|pdf|docx?|xlsx?)\b/gi, "[filename]"],
   [/\b(?:\/[\w.\-]+){3,}/g, "[path]"]
 ];
 function redact(v){
@@ -280,75 +288,140 @@ function redactData(d){
   return redact(String(d));
 }
 function hostOnly(u){ try{ return new URL(u, location.href).host; }catch(e){ return redact(u); } }
+function parseUA(){
+  const ua=navigator.userAgent;
+  let os="unknown", model="desktop";
+  if(/Windows NT 10/.test(ua)) os="Windows 10/11";
+  else if(/Windows/.test(ua)) os="Windows";
+  else if(/Android ([\d.]+)/.test(ua)){ os="Android "+RegExp.$1; model="Android device"; }
+  else if(/iPhone|iPod/.test(ua)){ os="iOS"; model="iPhone"; }
+  else if(/iPad/.test(ua)){ os="iPadOS"; model="iPad"; }
+  else if(/Mac OS X/.test(ua)) os="macOS";
+  else if(/Linux/.test(ua)) os="Linux";
+  let b="unknown";
+  if(/Edg\//.test(ua)) b="Edge"; else if(/OPR\//.test(ua)) b="Opera"; else if(/Chrome\//.test(ua)) b="Chrome"; else if(/Firefox\//.test(ua)) b="Firefox"; else if(/Safari\//.test(ua)) b="Safari";
+  return { os: os+" / "+b, device_model: model };
+}
+function networkType(){
+  if(!navigator.onLine) return "offline";
+  const c=navigator.connection||navigator.mozConnection||navigator.webkitConnection||{};
+  const t=String(c.effectiveType||"");
+  if(t.indexOf("4g")>=0) return "4g";
+  if(t.indexOf("3g")>=0) return "3g";
+  if(t.indexOf("2g")>=0) return "2g";
+  return c.type==="wifi" ? "wifi" : "unknown";
+}
 
-/* ---- session context: captured ONCE (not repeated per line) ---- */
-const SESSION = { id:"s"+Math.random().toString(36).slice(2,10), startedAt:new Date().toISOString(), startedMs:Date.now(), context:null };
+/* ---- session context: captured ONCE per session ---- */
+const UA = parseUA();
+const SESSION = { id:"sess_"+Math.random().toString(36).slice(2,10), startedAt:new Date().toISOString(), startedMs:Date.now(), context:null };
 (function captureContext(){
-  const nav=navigator, conn=nav.connection||nav.mozConnection||nav.webkitConnection||{};
+  const nav=navigator;
   let storage=false; try{ localStorage.setItem("__t","1"); localStorage.removeItem("__t"); storage=true; }catch(e){}
   SESSION.context = {
-    app:"Pulse", version:APP_VERSION,
-    userAgent:nav.userAgent, platform:nav.platform||"", language:nav.language, languages:(nav.languages||[]).join(","),
-    timezone:Intl.DateTimeFormat().resolvedOptions().timeZone, tzOffsetMin:new Date().getTimezoneOffset(),
+    session_id: SESSION.id, started_at: SESSION.startedAt, schema_version: SCHEMA_VERSION,
+    app:"Pulse", app_version: APP_VERSION, platform:"web", release_channel: RELEASE_CHANNEL,
+    os: UA.os, device_model: UA.device_model,
+    userAgent: nav.userAgent, language: nav.language, languages:(nav.languages||[]).join(","),
+    timezone:Intl.DateTimeFormat().resolvedOptions().timeZone, tz_offset_min:new Date().getTimezoneOffset(),
     screen:screen.width+"x"+screen.height, dpr:window.devicePixelRatio||1,
-    cores:nav.hardwareConcurrency||null, deviceMemoryGB:nav.deviceMemory||null,
-    connection:conn.effectiveType||"unknown", downlinkMbps:conn.downlink||null,
-    cookiesEnabled:nav.cookieEnabled, localStorage:storage,
+    cores:nav.hardwareConcurrency||null, device_memory_gb:nav.deviceMemory||null,
+    network_type: networkType(),
+    cookies_enabled:nav.cookieEnabled, local_storage:storage,
     referrer:document.referrer? hostOnly(document.referrer) : "direct",
-    landingHost:hostOnly(location.href),
-    supabaseConfigured:CONFIGURED, supabaseHost:CONFIGURED? SUPABASE_URL.replace(/^https?:\/\//,"") : null,
+    landing_host:hostOnly(location.href),
+    supabase_configured:CONFIGURED, supabase_host:CONFIGURED? SUPABASE_URL.replace(/^https?:\/\//,"") : null,
     standalone:(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)||false
   };
 })();
 
-/* ---- diag state (levels + sampling + retention) ---- */
+/* ---- pseudonymous user id: salted SHA-256 (never the raw id) ---- */
+let USER_HASH = null;
+async function setUserHash(rawId){
+  try{
+    let salt = localStorage.getItem(DIAG_SALT_KEY);
+    if(!salt){ salt = Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem(DIAG_SALT_KEY, salt); }
+    if(!rawId){ USER_HASH=null; return; }
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(salt+":"+rawId));
+    USER_HASH = "u_"+[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,12);
+  }catch(e){ USER_HASH=null; }
+}
+
+/* ---- diag state ---- */
 const diag = {
   enabled: localStorage.getItem(DIAG_KEY) !== "off",
-  logs: [], attempts:{}, vitals:{},
-  counters:{ errors:0, warnings:0, rageClicks:0, deadClicks:0, errorStates:0, apiErrors:0, apiSlow:0, deadClickMap:{} },
-  max: DIAG_MAX,
+  logs: [], attempts:{}, vitals:{}, forms:{},
+  counters:{ errors:0, warnings:0, rageClicks:0, deadClicks:0, errorStates:0, apiErrors:0, apiSlow:0, conversions:0, deadClickMap:{}, eventCounts:{} },
+  max: DIAG_MAX, retention: DIAG_RETENTION,
   sample:{ debug:0.3, info:1, warn:1, error:1 },
-  ttfvMs:null, maxScroll:0, filter:"all",
-  sessionId: SESSION.id, startedAt: SESSION.startedAt
+  ttfvMs:null, maxScroll:0, filter:"all", fb:null,
+  sessionId: SESSION.id, startedAt: SESSION.startedAt, schemaVersion: SCHEMA_VERSION
 };
 try{ if(diag.enabled){ diag.logs = JSON.parse(localStorage.getItem(DIAG_LOGS_KEY)||"[]") || []; } }catch(e){ diag.logs=[]; }
 
-function dlog(lvl, event, extra){
+/* ---- envelope + validation ---- */
+const ENVELOPE_REQUIRED = ["event_name","schema_version","timestamp","session_id","platform","app_version","os","device_model","network_type","screen_or_route","log_level","release_channel"];
+function buildEvent(event_name, log_level, opts){
+  opts = opts || {};
+  const ev = {
+    event_name, schema_version: SCHEMA_VERSION,
+    timestamp: new Date().toISOString(),
+    session_id: SESSION.id,
+    platform: "web", app_version: APP_VERSION,
+    os: UA.os, device_model: UA.device_model,
+    network_type: networkType(), screen_or_route: screenName(),
+    log_level, release_channel: RELEASE_CHANNEL
+  };
+  if(opts.attempt_id) ev.attempt_id = opts.attempt_id;
+  if(USER_HASH) ev.user_id = USER_HASH;
+  if(opts.properties && Object.keys(opts.properties).length) ev.properties = redactData(opts.properties);
+  return ev;
+}
+function validateEvent(ev){ return ENVELOPE_REQUIRED.filter(k=> ev[k]===undefined || ev[k]===null || ev[k]===""); }
+
+function dlog(log_level, event_name, opts){
   if(!diag.enabled) return;
-  if(diag.sample[lvl]!=null && Math.random()>diag.sample[lvl]) return;
-  const entry = Object.assign({ ts:new Date().toISOString(), lvl, event, screen:screenName() }, extra||{});
-  if(entry.data!==undefined) entry.data = redactData(entry.data);
-  entry.line = logLine(entry);
-  diag.logs.push(entry);
-  if(lvl==="error") diag.counters.errors++;
-  if(lvl==="warn") diag.counters.warnings++;
+  if(diag.sample[log_level]!=null && Math.random()>diag.sample[log_level]) return;
+  const ev = buildEvent(event_name, log_level, opts||{});
+  const missing = validateEvent(ev);
+  if(missing.length){ ev.properties = Object.assign({}, ev.properties, { schema_missing: missing.join(",") }); }
+  ev.line = logLine(ev);
+  diag.logs.push(ev);
+  diag.counters.eventCounts[event_name] = (diag.counters.eventCounts[event_name]||0)+1;
+  if(log_level==="error") diag.counters.errors++;
+  if(log_level==="warn") diag.counters.warnings++;
   persist();
 }
-const dbg  = (event,data)=>dlog("debug", event, data===undefined?{}:{data});
-const dinfo= (event,data)=>dlog("info",  event, data===undefined?{}:{data});
-const dwarn= (event,data)=>dlog("warn",  event, data===undefined?{}:{data});
-const derr  = (event,data)=>dlog("error", event, data===undefined?{}:{data});
+const dbg  = (e,p)=>dlog("debug", e, p===undefined?{}:{properties:p});
+const dinfo= (e,p)=>dlog("info",  e, p===undefined?{}:{properties:p});
+const dwarn= (e,p)=>dlog("warn",  e, p===undefined?{}:{properties:p});
+const derr = (e,p)=>dlog("error", e, p===undefined?{}:{properties:p});
 const diagLog = dinfo;
-function diagError(event, err, extra){
+function diagError(event, err, props){
   const msg = typeof err==="string" ? err : (err && (err.message || (err.reason && err.reason.message))) || String(err);
-  dlog("error", event, Object.assign({ data: msg }, extra||{}));
+  dlog("error", event, { properties: Object.assign({ message: msg }, props||{}) });
 }
 
 /* ---- attempt = intent + outcome + correlation id ---- */
-function attempt(name, data){
-  const id = "a"+Math.random().toString(36).slice(2,8);
-  diag.attempts[id] = { id, name, screen:screenName(), startedAt:new Date().toISOString(), status:"pending" };
-  dlog("info", name, { attempt_id:id, outcome:"start", data });
+function attempt(name, properties){
+  const id = "att_"+Math.random().toString(36).slice(2,8);
+  diag.attempts[id] = { attempt_id:id, event_name:name, screen_or_route:screenName(), started_at:new Date().toISOString(), outcome:"pending" };
+  dlog("info", name, { attempt_id:id, properties: Object.assign({ phase:"start" }, properties||{}) });
   return id;
 }
-function attemptOk(id, data){
-  const a=diag.attempts[id]; if(a){ a.status="success"; a.endedAt=new Date().toISOString(); }
-  dlog("info", a?a.name:"attempt", { attempt_id:id, outcome:"success", data });
+function attemptOk(id, properties){
+  const a=diag.attempts[id]; if(a){ a.outcome="success"; a.ended_at=new Date().toISOString(); }
+  dlog("info", a?a.event_name:"attempt_result", { attempt_id:id, properties: Object.assign({ phase:"result", outcome:"success" }, properties||{}) });
 }
-function attemptFail(id, err, data){
-  const a=diag.attempts[id]; if(a){ a.status="failed"; a.endedAt=new Date().toISOString(); }
+function attemptFail(id, err, properties){
+  const a=diag.attempts[id]; if(a){ a.outcome="failed"; a.ended_at=new Date().toISOString(); }
+  diag.counters.errorStates++;
   const msg = typeof err==="string" ? err : (err && err.message) || String(err);
-  dlog("error", a?a.name:"attempt", { attempt_id:id, outcome:"fail", data:Object.assign({ error:msg }, data||{}) });
+  dlog("error", a?a.event_name:"attempt_result", { attempt_id:id, properties: Object.assign({ phase:"result", outcome:"failed", error_message:msg }, properties||{}) });
+}
+function trackConversion(goal_name, value, source){
+  diag.counters.conversions++;
+  dinfo("conversion", { goal_name, value: value==null?null:value, source: source||"web" });
 }
 function setDiag(on){
   diag.enabled = on;
@@ -360,14 +433,33 @@ function setDiag(on){
 function markTTFV(label){
   if(diag.ttfvMs!=null) return;
   diag.ttfvMs = Date.now()-SESSION.startedMs;
-  dinfo("time_to_first_value", { ms:diag.ttfvMs, firstAction:label });
+  dinfo("time_to_first_value", { ms:diag.ttfvMs, first_action:label });
 }
 
-/* ---- global error capture (stack + source) ---- */
-window.addEventListener("error", e=>diagError("js_error", { message:e.message||"", source:hostOnly(e.filename||location.href), line:e.lineno||0, col:e.colno||0, stack:(e.error&&e.error.stack)?String(e.error.stack).split("\n").slice(0,4).join(" | "):null }));
-window.addEventListener("unhandledrejection", e=>diagError("promise_rejection", e.reason));
+/* ---- form lifecycle (form_start / form_submit / form_abandon) ---- */
+function formStart(id, step){
+  if(diag.forms[id]) return;
+  diag.forms[id] = { id, step, startedAt:Date.now() };
+  dinfo("form_start", { form_id:id, step, field_count:0 });
+}
+function formSubmit(id, step){
+  const f=diag.forms[id];
+  dinfo("form_submit", { form_id:id, step, time_on_form_ms: f? Date.now()-f.startedAt : null });
+  delete diag.forms[id];
+}
+function formAbandonAll(){
+  Object.keys(diag.forms).forEach(id=>{
+    const f=diag.forms[id];
+    dwarn("form_abandon", { form_id:id, step:f.step, time_on_form_ms:Date.now()-f.startedAt });
+    delete diag.forms[id];
+  });
+}
 
-/* ---- network capture (wraps fetch used by supabase-js) ---- */
+/* ---- global error capture (js_error) ---- */
+window.addEventListener("error", e=>diagError("js_error", { message:e.message||"", source:hostOnly(e.filename||location.href), line:e.lineno||0, col:e.colno||0, stack_hash:(e.error&&e.error.stack)?String(e.error.stack).split("\n").slice(0,4).join(" | "):null }));
+window.addEventListener("unhandledrejection", e=>diagError("js_error", e.reason, { error_type:"unhandled_rejection" }));
+
+/* ---- network capture (api_call: endpoint host + status + latency) ---- */
 (function(){
   if(!window.fetch || window.__diagFetch) return;
   window.__diagFetch = true;
@@ -378,33 +470,39 @@ window.addEventListener("unhandledrejection", e=>diagError("promise_rejection", 
     try{
       const res = await orig(input, init);
       const ms = Math.round(performance.now()-t0);
-      if(res.status>=400){ diag.counters.apiErrors++; derr("api_error", { host:hostOnly(url), status:res.status, ms }); }
-      else if(ms>3000){ diag.counters.apiSlow++; dwarn("api_slow", { host:hostOnly(url), ms }); }
+      if(res.status>=400){ diag.counters.apiErrors++; derr("api_call", { endpoint:hostOnly(url), status_code:res.status, latency_ms:ms, ok:false }); }
+      else if(ms>3000){ diag.counters.apiSlow++; dwarn("api_call", { endpoint:hostOnly(url), status_code:res.status, latency_ms:ms, slow:true }); }
       return res;
     }catch(e){
       const ms = Math.round(performance.now()-t0);
       diag.counters.apiErrors++;
-      derr("api_network_fail", { host:hostOnly(url), ms, msg:(e&&e.message)||"network" });
+      derr("api_call", { endpoint:hostOnly(url), status_code:null, latency_ms:ms, ok:false, error_message:(e&&e.message)||"network" });
       throw e;
     }
   };
 })();
 
-/* ---- web vitals (RUM) ---- */
+/* ---- web vitals (web_vitals: lcp_ms, cls, inp_ms, ttfb_ms) ---- */
 (async ()=>{
+  const MAP={ LCP:"lcp_ms", CLS:"cls", INP:"inp_ms", TTFB:"ttfb_ms", FCP:"fcp_ms" };
   try{
     const wv = await import("https://esm.sh/web-vitals@4");
-    const put = (m)=>{ const v=Math.round((m.value||0)*1000)/1000; diag.vitals[m.name]={ value:v, rating:m.rating||null }; dbg("vital_"+String(m.name).toLowerCase(), { value:v, rating:m.rating||null }); };
+    const put = (m)=>{
+      const key = MAP[m.name]||String(m.name).toLowerCase();
+      const v = Math.round((m.value||0)*1000)/1000;
+      diag.vitals[key] = { value:v, rating:m.rating||null };
+      dinfo("web_vitals", { metric:key, value:v, rating:m.rating||null });
+    };
     wv.onLCP(put, {reportAllChanges:false});
     wv.onCLS(put, {reportAllChanges:false});
     wv.onINP(put, {reportAllChanges:false});
     wv.onFCP(put);
     wv.onTTFB(put);
-  }catch(e){ dbg("web_vitals_unavailable", { msg:(e&&e.message)||"import failed" }); }
+  }catch(e){ dbg("web_vitals_unavailable", { message:(e&&e.message)||"import failed" }); }
 })();
 
-/* ---- UX signals: rage clicks, dead clicks, scroll, session ---- */
-let _rageLock=false, _recentClicks=[];
+/* ---- UX signals: rage_click, dead_click, back_button_spam, scroll ---- */
+let _rageLock=false, _recentClicks=[], _backs=[], _backLock=false;
 function describeTarget(el){
   if(!el || !el.tagName) return "?";
   const id = el.id? "#"+el.id : "";
@@ -415,75 +513,87 @@ document.addEventListener("click", (e)=>{
   if(!diag.enabled) return;
   const now=Date.now(), x=e.clientX, y=e.clientY;
   _recentClicks.push({t:now,x,y});
-  while(_recentClicks.length && now-_recentClicks[0].t>1200) _recentClicks.shift();
+  while(_recentClicks.length && now-_recentClicks[0].t>2000) _recentClicks.shift();
   const near=_recentClicks.filter(c=>Math.hypot(c.x-x,c.y-y)<44);
   if(near.length>=3 && !_rageLock){
-    _rageLock=true; setTimeout(()=>{ _rageLock=false; },1500);
+    _rageLock=true; setTimeout(()=>{ _rageLock=false; },2000);
     diag.counters.rageClicks++;
-    dwarn("rage_click", { count:near.length, target:describeTarget(e.target) });
+    dwarn("rage_click", { tap_count:near.length, element:describeTarget(e.target), window_ms:2000 });
   }
   const el = e.target && e.target.closest && e.target.closest("[data-act],[data-go],a,button,input,textarea,select,label,[role=button]");
   if(!el){
     diag.counters.deadClicks++;
     const key=describeTarget(e.target);
     diag.counters.deadClickMap[key]=(diag.counters.deadClickMap[key]||0)+1;
-    dbg("dead_click", { target:key });
+    dbg("dead_click", { element:key });
   }
 }, true);
+window.addEventListener("popstate", ()=>{
+  if(!diag.enabled) return;
+  const now=Date.now(); _backs.push(now); _backs=_backs.filter(t=>now-t<2000);
+  if(_backs.length>=3 && !_backLock){ _backLock=true; setTimeout(()=>{ _backLock=false; },2000); dwarn("back_button_spam", { press_count:_backs.length, window_ms:2000 }); }
+});
 window.addEventListener("scroll", ()=>{
   const d=document.documentElement;
   const pct=Math.min(100, Math.round(100*(window.scrollY+window.innerHeight)/Math.max(d.scrollHeight,1)));
   if(pct>diag.maxScroll) diag.maxScroll=pct;
 }, {passive:true});
 window.addEventListener("visibilitychange", ()=>{
-  if(document.visibilityState==="hidden") dinfo("session_checkpoint", { durationMs:Date.now()-SESSION.startedMs, scrollDepth:diag.maxScroll, logs:diag.logs.length });
+  if(document.visibilityState==="hidden"){
+    formAbandonAll();
+    dinfo("session_checkpoint", { duration_ms:Date.now()-SESSION.startedMs, scroll_depth:diag.maxScroll, log_count:diag.logs.length });
+  }
 });
-window.addEventListener("online", ()=>dinfo("network_online"));
-window.addEventListener("offline", ()=>dwarn("network_offline"));
+window.addEventListener("online", ()=>dinfo("network_state", { network_type:networkType(), online:true }));
+window.addEventListener("offline", ()=>dwarn("network_state", { network_type:"offline", online:false }));
 async function capturePermissions(){
   const names=["geolocation","notifications","camera","microphone","clipboard-read","clipboard-write"];
   const out={};
   for(const n of names){
     try{ const s=await navigator.permissions.query({name:n}); out[n]=s.state; }catch(e){ out[n]="unsupported"; }
   }
-  dinfo("permissions", out);
+  dinfo("permission_state_resolved", Object.assign({ media_item_count: posts.length }, out));
 }
 
 function screenName(){ try{ const h=location.hash.replace(/^#/,"")||"/feed"; return h.split("/").filter(Boolean)[0]||"feed"; }catch(e){ return "?"; } }
 function logLine(l){
-  let s="["+l.ts+"] "+String(l.lvl).toUpperCase()+" "+l.event;
+  let s="["+l.timestamp+"] "+String(l.log_level).toUpperCase()+" "+l.event_name;
   if(l.attempt_id) s+=" id="+l.attempt_id;
-  if(l.outcome) s+=" -> "+l.outcome;
-  if(l.screen) s+=" @"+l.screen;
-  if(l.data!==undefined && l.data!==null) s+=" :: "+diagDataStr(l.data);
+  const o=l.properties&&l.properties.outcome; if(o) s+=" -> "+o;
+  if(l.screen_or_route) s+=" @"+l.screen_or_route;
+  if(l.properties!==undefined && l.properties!==null) s+=" :: "+diagDataStr(l.properties);
   return s;
 }
 function pruneLogs(){
-  const cutoff = Date.now() - DIAG_RETENTION_DAYS*864e5;
-  diag.logs = diag.logs.filter(l=>{ const t=Date.parse(l.ts); return isNaN(t)? true : t>=cutoff; });
+  const now=Date.now();
+  diag.logs = diag.logs.filter(l=>{
+    const t=Date.parse(l.timestamp); if(isNaN(t)) return true;
+    const days = diag.retention[l.log_level]!=null ? diag.retention[l.log_level] : 7;
+    return (now-t) <= days*864e5;
+  });
   if(diag.logs.length>diag.max) diag.logs=diag.logs.slice(-diag.max);
 }
 function persist(){ try{ pruneLogs(); localStorage.setItem(DIAG_LOGS_KEY, JSON.stringify(diag.logs)); }catch(e){} }
 function diagDataStr(d){ if(d===null||d===undefined) return ""; return typeof d==="string"? d : JSON.stringify(d); }
-function diagCounters(){ const c=Object.assign({}, diag.counters); delete c.deadClickMap; return c; }
+function diagCounters(){ const c=Object.assign({}, diag.counters); delete c.deadClickMap; delete c.eventCounts; return c; }
 function diagEnv(){
   const e=Object.assign({}, SESSION.context||{});
-  e.sessionId=SESSION.id; e.sessionStarted=SESSION.startedAt;
   e.online=navigator.onLine; e.viewport=window.innerWidth+"x"+window.innerHeight;
-  e.signedIn=!!user; e.anonymous=user?!!user.is_anonymous:false; e.userRef=user? user.id.slice(0,8)+"…" : null;
-  e.postsLoaded=posts.length; e.diagnosticsEnabled=diag.enabled;
-  e.ttfvMs=diag.ttfvMs; e.scrollDepth=diag.maxScroll;
-  e.logCount=diag.logs.length; e.errorCount=diag.counters.errors;
+  e.signed_in=!!user; e.anonymous=user?!!user.is_anonymous:false; e.user_id=USER_HASH||null;
+  e.posts_loaded=posts.length; e.diagnostics_enabled=diag.enabled;
+  e.ttfv_ms=diag.ttfvMs; e.scroll_depth=diag.maxScroll;
+  e.log_count=diag.logs.length; e.error_count=diag.counters.errors;
   return e;
 }
 function diagReport(){
   return {
-    meta:{ app:"Pulse Diagnostics", version:APP_VERSION, sessionId:SESSION.id, generatedAt:new Date().toISOString(), contact:DIAG_EMAIL, retentionDays:DIAG_RETENTION_DAYS, sampling:diag.sample },
+    meta:{ app:"Pulse Diagnostics", schema_version:SCHEMA_VERSION, app_version:APP_VERSION, session_id:SESSION.id, generated_at:new Date().toISOString(), contact:DIAG_EMAIL, release_channel:RELEASE_CHANNEL, retention_days:diag.retention, sampling:diag.sample },
     environment: diagEnv(),
-    session:{ id:SESSION.id, startedAt:SESSION.startedAt, context:SESSION.context },
+    session:{ session_id:SESSION.id, started_at:SESSION.startedAt, context:SESSION.context },
     vitals: diag.vitals,
     counters: diagCounters(),
-    deadClickMap: diag.counters.deadClickMap,
+    event_counts: diag.counters.eventCounts,
+    dead_click_map: diag.counters.deadClickMap,
     attempts: Object.values(diag.attempts),
     logs: diag.logs
   };
@@ -500,7 +610,7 @@ function fmtTxt(r){
   s+="\n== COUNTERS ==\n";
   for(const [k,v] of Object.entries(r.counters||{})) s+=k+": "+v+"\n";
   s+="\n== ATTEMPTS (intent -> outcome) ==\n";
-  for(const a of (r.attempts||[])) s+="["+a.startedAt+"] "+a.name+" id="+a.id+" @"+a.screen+" -> "+a.status+"\n";
+  for(const a of (r.attempts||[])) s+="["+a.started_at+"] "+a.event_name+" id="+a.attempt_id+" @"+a.screen_or_route+" -> "+a.outcome+"\n";
   s+="\n== LOGS ("+r.logs.length+") ==\n";
   for(const l of r.logs) s+=(l.line||diagDataStr(l))+"\n";
   return s;
@@ -514,16 +624,17 @@ function fmtMd(r){
   for(const k of Object.keys(r.vitals||{})) s+="| "+k+" | "+r.vitals[k].value+" | "+(r.vitals[k].rating||"")+" |\n";
   s+="\n## Counters\n\n";
   for(const [k,v] of Object.entries(r.counters||{})) s+="- "+k+": "+v+"\n";
-  s+="\n## Attempts (intent to outcome)\n\n| Time | Intent | id | Screen | Outcome |\n| --- | --- | --- | --- | --- |\n";
-  for(const a of (r.attempts||[])) s+="| "+a.startedAt+" | "+a.name+" | "+a.id+" | "+a.screen+" | "+a.status+" |\n";
-  s+="\n## Logs ("+r.logs.length+")\n\n| Time | Level | Event | id | Outcome | Screen | Data |\n| --- | --- | --- | --- | --- | --- | --- |\n";
-  for(const l of r.logs) s+="| "+l.ts+" | "+l.lvl+" | "+l.event+" | "+(l.attempt_id||"")+" | "+(l.outcome||"")+" | "+(l.screen||"")+" | "+diagDataStr(l.data).replace(/\|/g,"\\|")+" |\n";
+  s+="\n## Attempts (intent to outcome)\n\n| started_at | event_name | attempt_id | screen_or_route | outcome |\n| --- | --- | --- | --- | --- |\n";
+  for(const a of (r.attempts||[])) s+="| "+a.started_at+" | "+a.event_name+" | "+a.attempt_id+" | "+a.screen_or_route+" | "+a.outcome+" |\n";
+  s+="\n## Logs ("+r.logs.length+")\n\n| timestamp | log_level | event_name | attempt_id | screen_or_route | properties |\n| --- | --- | --- | --- | --- | --- |\n";
+  for(const l of r.logs) s+="| "+l.timestamp+" | "+l.log_level+" | "+l.event_name+" | "+(l.attempt_id||"")+" | "+(l.screen_or_route||"")+" | "+diagDataStr(l.properties).replace(/\|/g,"\\|")+" |\n";
   return s;
 }
 function csvCell(v){ v=String(v==null?"":v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
 function fmtCsv(r){
-  let s="time,level,event,attempt_id,outcome,screen,data\n";
-  for(const l of r.logs) s+=[l.ts,l.lvl,l.event,l.attempt_id||"",l.outcome||"",l.screen||"",diagDataStr(l.data)].map(csvCell).join(",")+"\n";
+  const cols=["timestamp","log_level","event_name","attempt_id","user_id","platform","app_version","os","device_model","network_type","screen_or_route","release_channel","schema_version","properties"];
+  let s=cols.join(",")+"\n";
+  for(const l of r.logs) s+=cols.map(c=>csvCell(c==="properties"?diagDataStr(l.properties):l[c])).join(",")+"\n";
   return s;
 }
 const fmtJson = (r)=>JSON.stringify(r,null,2);
@@ -540,7 +651,7 @@ function downloadFile(name, text, mime){
   a.href=URL.createObjectURL(blob); a.download=name;
   document.body.appendChild(a); a.click();
   setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
-  diagLog("diag_export", name);
+  dinfo("diagnostic_export", { format:name });
 }
 async function diagShare(fmt){
   const f=diagFile(fmt);
@@ -553,14 +664,14 @@ async function diagShare(fmt){
     } else {
       await navigator.clipboard.writeText(f.text); toast("Share support nahi — report copy kar di");
     }
-    diagLog("diag_share", f.name);
+    dinfo("diagnostic_share", { format:f.name });
   }catch(e){}
 }
 function diagEmail(){
-  diagLog("diag_email", diag.sessionId);
+  dinfo("diagnostic_email", { session_id:diag.sessionId });
   const r=diagReport();
   const body=fmtTxt(r);
-  const subj="Pulse Diagnostics — "+diag.sessionId+" ("+r.environment.errorCount+" errors)";
+  const subj="Pulse Diagnostics — "+diag.sessionId+" ("+(r.environment.error_count||0)+" errors)";
   const max=1800;
   const clipped = body.length>max ? body.slice(0,max)+"\n\n…(poora report Share/Export se bhejo)" : body;
   window.location.href="mailto:"+DIAG_EMAIL+"?subject="+encodeURIComponent(subj)+"&body="+encodeURIComponent(clipped);
@@ -599,10 +710,19 @@ function go(h){ if(location.hash===h){ render(); } else { location.hash = h; } w
 window.addEventListener("hashchange", ()=>{ render(); });
 function route(){ const h=location.hash.replace(/^#/,"")||"/feed"; return h.split("/").filter(Boolean); }
 
+let _lastRoute=null;
+function logPageView(){
+  const cur=screenName();
+  if(cur===_lastRoute) return;
+  const prev=_lastRoute; _lastRoute=cur;
+  if(prev==="login") formAbandonAll();
+  dinfo("page_view", { url_path: location.hash.replace(/^#/,"")||"/feed", previous_route: prev, title: document.title });
+}
 function render(){
   if(!CONFIGURED) return viewSetup();
   renderHeader();
   const r=route();
+  logPageView();
   if(r[0]==="login") return viewLogin();
   if(r[0]==="profile") return viewProfile(r[1]);
   if(r[0]==="post") return viewPost(r[1]);
@@ -667,6 +787,7 @@ function viewLogin(){
       ${form}
     </div>
     <div style="text-align:center;margin-top:6px"><button class="linkbtn" data-go="#/feed">← Feed dekho bina sign in</button></div>`;
+  formStart("login_"+loginTab, loginTab);
 }
 
 async function ensureProfile(){
@@ -694,7 +815,7 @@ async function afterAuth(){
   render();
   loadFeed();
 }
-function signOut(){ diagLog("signout_requested"); sb.auth.signOut().then(()=>{ user=null; profile=null; toast("Signed out"); go("/feed"); render(); }); }
+function signOut(){ dinfo("auth_state_change", {outcome:"signout_requested"}); sb.auth.signOut().then(()=>{ user=null; profile=null; toast("Signed out"); go("/feed"); render(); }); }
 
 /* ============================================================
    FEED / DATA
@@ -727,9 +848,9 @@ async function loadFeed(){
   if(!CONFIGURED) return;
   await loadMyLikes();
   const { data, error } = await fetchPosts();
-  if(error){ console.error(error); diagError("feed_load_failed", error.message); toast("Feed load nahi hua"); return; }
+  if(error){ console.error(error); diagError("feed_load_result", error.message, {outcome:"failed"}); toast("Feed load nahi hua"); return; }
   posts=data||[];
-  diagLog("feed_loaded", {count:posts.length});
+  dinfo("feed_load_result", { outcome:"success", item_count:posts.length });
   markTTFV("feed_loaded");
   render();
 }
@@ -759,23 +880,25 @@ function viewSettings(){
 
 function viewDiagnostics(){
   const app=document.getElementById("app");
-  const r=diagReport(), e=r.environment, c=r.counters, f=diag.filter;
-  const lvlTag=(l)=> l.lvl==="error"?"ERR":(l.lvl==="warn"?"WRN":(l.lvl==="debug"?"DBG":"INF"));
-  const shown=diag.logs.filter(l=> f==="all"? true : (f==="errors"? l.lvl==="error" : l.lvl==="warn")).slice().reverse().slice(0,200);
+  const r=diagReport(), c=r.counters, f=diag.filter;
+  const lvlTag=(l)=> l.log_level==="error"?"ERR":(l.log_level==="warn"?"WRN":(l.log_level==="debug"?"DBG":"INF"));
+  const shown=diag.logs.filter(l=> f==="all"? true : (f==="errors"? l.log_level==="error" : l.log_level==="warn")).slice().reverse().slice(0,200);
   const rows=shown.map(l=>
-    `<div class="logline ${l.lvl}"><span class="lt">${esc(String(l.ts).slice(11,19))}</span> <span class="lv">${lvlTag(l)}</span> ${esc(l.event)}${l.attempt_id?` <span class="ld">id=${esc(l.attempt_id)} ${esc(l.outcome||"")}</span>`:""}${(l.data!==undefined&&l.data!==null)?` <span class="ld">${esc(diagDataStr(l.data))}</span>`:""} <span class="ld">@${esc(l.screen||"")}</span></div>`
+    `<div class="logline ${l.log_level}"><span class="lt">${esc(String(l.timestamp).slice(11,19))}</span> <span class="lv">${lvlTag(l)}</span> ${esc(l.event_name)}${l.attempt_id?` <span class="ld">id=${esc(l.attempt_id)}</span>`:""}${(l.properties!==undefined&&l.properties!==null)?` <span class="ld">${esc(diagDataStr(l.properties))}</span>`:""} <span class="ld">@${esc(l.screen_or_route||"")}</span></div>`
   ).join("") || `<div class="pmuted">Koi log nahi.</div>`;
   const vit=Object.keys(r.vitals).map(k=>`<div><span>${esc(k)}</span><b>${r.vitals[k].value}${r.vitals[k].rating?" ("+esc(r.vitals[k].rating)+")":""}</b></div>`).join("") || `<div class="pmuted" style="padding:6px 0">Interactions ke baad vitals aayenge…</div>`;
-  const att=(r.attempts||[]).slice().reverse().slice(0,20).map(a=>`<div><span>${esc(a.name)} <span class="ld">id=${esc(a.id)} @${esc(a.screen)}</span></span><b style="color:${a.status==="success"?"var(--green)":a.status==="failed"?"var(--danger)":"var(--muted)"}">${esc(a.status)}</b></div>`).join("") || `<div class="pmuted" style="padding:6px 0">Koi attempt nahi.</div>`;
+  const att=(r.attempts||[]).slice().reverse().slice(0,20).map(a=>`<div><span>${esc(a.event_name)} <span class="ld">id=${esc(a.attempt_id)} @${esc(a.screen_or_route)}</span></span><b style="color:${a.outcome==="success"?"var(--green)":a.outcome==="failed"?"var(--danger)":"var(--muted)"}">${esc(a.outcome)}</b></div>`).join("") || `<div class="pmuted" style="padding:6px 0">Koi attempt nahi.</div>`;
   const flt=(id,label)=>`<button class="chip ${f===id?"active":""}" data-act="diag-filter" data-level="${id}">${label}</button>`;
-  const deadTop=Object.entries(r.deadClickMap||{}).sort((a,b)=>b[1]-a[1]).slice(0,5).map(x=>x[0]+" ("+x[1]+")").join(", ");
+  const deadTop=Object.entries(r.dead_click_map||{}).sort((a,b)=>b[1]-a[1]).slice(0,5).map(x=>x[0]+" ("+x[1]+")").join(", ");
+  const topEvents=Object.entries(r.event_counts||{}).sort((a,b)=>b[1]-a[1]).slice(0,8).map(x=>`<div><span>${esc(x[0])}</span><b>${x[1]}</b></div>`).join("") || `<div class="pmuted">—</div>`;
   app.innerHTML=`
     <button class="back" data-go="#/settings">← Settings</button>
     <div class="card">
       <div class="pname" style="font-size:17px">Diagnostics</div>
-      <div class="pmuted" style="margin-top:4px">Status: <b style="color:${diag.enabled?"var(--green)":"var(--danger)"}">${diag.enabled?"ON":"OFF"}</b> · ${diag.logs.length} entries · ${c.errors} errors · ${c.warnings} warns</div>
+      <div class="pmuted" style="margin-top:4px">schema v${esc(SCHEMA_VERSION)} · ${esc(RELEASE_CHANNEL)} · <b style="color:${diag.enabled?"var(--green)":"var(--danger)"}">${diag.enabled?"ON":"OFF"}</b></div>
+      <div class="pmuted">${diag.logs.length} events · ${c.errors} errors · ${c.warnings} warns · ${c.conversions} conversions</div>
       <div class="pmuted">Session ${esc(SESSION.id)} · TTFV ${diag.ttfvMs!=null?diag.ttfvMs+"ms":"—"} · scroll ${diag.maxScroll}%</div>
-      ${diag.enabled?"":`<div class="note" style="border-color:#5a3030">Diagnostics OFF hai — logs collect nahi ho rahe. Settings me on karo.</div>`}
+      ${diag.enabled?"":`<div class="note" style="border-color:#5a3030">Diagnostics OFF hai — events collect nahi ho rahe. Settings me on karo.</div>`}
       <div class="dgrid">
         <button class="btn" data-act="diag-refresh">🔄 Refresh</button>
         <button class="btn" data-act="diag-share">📤 Share</button>
@@ -787,7 +910,7 @@ function viewDiagnostics(){
         <button class="btn" data-act="diag-txt">⬇️ Text</button>
         <button class="btn" data-act="diag-clean" style="grid-column:1 / -1">🧹 Clean logs</button>
       </div>
-      <div class="note"><b>Email report</b> se ${DIAG_EMAIL} pe compose khulega — logs pehle se bhare honge, sirf Send dabana hai. Bade logs ke liye <b>Share</b> ya <b>Export</b> — poori file attach ho jaati hai.</div>
+      <div class="note"><b>Email report</b> se ${DIAG_EMAIL} pe compose khulega — events pehle se bhare honge, sirf Send dabana hai. Bade logs ke liye <b>Share</b> ya <b>Export</b> — poori file attach ho jaati hai.</div>
     </div>
     <div class="card">
       <div style="font-weight:700;margin-bottom:8px">Web vitals (RUM)</div>
@@ -798,6 +921,7 @@ function viewDiagnostics(){
       <div class="kv">
         <div><span>rage clicks</span><b>${c.rageClicks}</b></div>
         <div><span>dead clicks</span><b>${c.deadClicks}</b></div>
+        <div><span>error states</span><b>${c.errorStates}</b></div>
         <div><span>api errors</span><b>${c.apiErrors}</b></div>
         <div><span>slow api (&gt;3s)</span><b>${c.apiSlow}</b></div>
       </div>
@@ -808,11 +932,22 @@ function viewDiagnostics(){
       <div class="kv">${att}</div>
     </div>
     <div class="card">
+      <div style="font-weight:700;margin-bottom:6px">Feedback</div>
+      <div class="pmuted" style="margin-bottom:8px">App kaisa laga? Rating do (comment optional).</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">${[1,2,3,4,5].map(n=>`<button class="chip ${diag.fb===n?"active":""}" data-act="fb-rate" data-rate="${n}">${n}★</button>`).join("")}</div>
+      <textarea id="fbText" placeholder="Kuch likhna ho to..." style="min-height:56px"></textarea>
+      <button class="btn primary block" style="margin-top:10px" data-act="fb-submit">Send feedback</button>
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:8px">Event counts</div>
+      <div class="kv">${topEvents}</div>
+    </div>
+    <div class="card">
       <div style="font-weight:700;margin-bottom:8px">Session context (captured once)</div>
       <div class="kv">${Object.entries(r.session.context||{}).map(([k,v])=>`<div><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join("")}</div>
     </div>
     <div class="card">
-      <div style="font-weight:700;margin-bottom:8px">Logs (${shown.length}${f!=="all"?" · "+f:""})</div>
+      <div style="font-weight:700;margin-bottom:8px">Events (${shown.length}${f!=="all"?" · "+f:""})</div>
       <div style="display:flex;gap:8px;margin-bottom:10px">${flt("all","All")}${flt("errors","Errors")}${flt("warn","Warn")}</div>
       <div class="logbox">${rows}</div>
     </div>`;
@@ -1051,7 +1186,7 @@ async function createPost(){
       const ext=(f.name.split(".").pop()||"bin").toLowerCase().slice(0,5);
       const path=`${user.id}/${crypto.randomUUID()}.${ext}`;
       const up=await sb.storage.from("media").upload(path, f, {cacheControl:"3600", upsert:false});
-      if(up.error){ console.error(up.error); diagError("upload_failed", up.error.message); attemptFail(aid, up.error.message); toast("Upload fail: "+up.error.message); return; }
+      if(up.error){ console.error(up.error); diagError("media_upload_result", up.error.message, {outcome:"failed"}); attemptFail(aid, up.error.message, {stage:"upload"}); toast("Upload fail: "+up.error.message); return; }
       const url=sb.storage.from("media").getPublicUrl(path).data.publicUrl;
       const kind=(f.type==="application/pdf"||ext==="pdf")?"pdf":(f.type.startsWith("video")?"video":"image");
       media.push({url, path, kind});
@@ -1068,9 +1203,10 @@ async function createPost(){
     ins=await sb.from("posts").insert({ author:user.id, type, text, media_url, media_path });
   }
   const error=ins.error;
-  if(error){ console.error(error); diagError("post_create_failed", error.message); attemptFail(aid, error.message); toast("Post fail: "+error.message); return; }
-  diagLog("post_created", {type, media:media.length});
-  attemptOk(aid, {type, media:media.length});
+  if(error){ console.error(error); diagError("post_create_result", error.message, {outcome:"failed"}); attemptFail(aid, error.message, {stage:"insert"}); toast("Post fail: "+error.message); return; }
+  dinfo("post_create_result", { outcome:"success", type, media_count:media.length });
+  attemptOk(aid, { type, media_count:media.length });
+  trackConversion("create_post", media.length||null, "feed");
   clearPreview();
   toast("Posted! 🎉");
   go("/feed");
@@ -1118,7 +1254,7 @@ async function hydratePdfThumbs(){
 let pdfDoc=null, pdfPageNo=1;
 async function openPdfReader(url){
   if(!url) return;
-  diagLog("pdf_open");
+  dinfo("pdf_view_result", { outcome:"open" });
   const ov=document.getElementById("pdfReader");
   ov.classList.add("show");
   pdfPageNo=1; pdfDoc=null;
@@ -1131,7 +1267,7 @@ async function openPdfReader(url){
     pdfDoc=await window.pdfjsLib.getDocument(url).promise;
     document.getElementById("pdfCount").textContent=pdfDoc.numPages;
     await renderPdfPage();
-  }catch(err){ console.error(err); diagError("pdf_render_failed", err && err.message); pdfFallback(url); }
+  }catch(err){ console.error(err); diagError("pdf_view_result", (err&&err.message)||"render failed", {outcome:"failed"}); pdfFallback(url); }
 }
 function pdfFallback(url){
   const wrap=document.getElementById("pdfCanvasWrap");
@@ -1193,6 +1329,7 @@ document.addEventListener("click", async (e)=>{
   if(act==="signout") return signOut();
 
   if(act==="login-github"){
+    formSubmit("login_github","github");
     const { error }=await sb.auth.signInWithOAuth({ provider:"github", options:{ redirectTo: location.href.split("#")[0] } });
     if(error) toast(error.message);
     return;
@@ -1200,6 +1337,7 @@ document.addEventListener("click", async (e)=>{
   if(act==="email-send"){
     const email=(document.getElementById("fEmail").value||"").trim();
     if(!email.includes("@")) return toast("Sahi email daalo");
+    formSubmit("login_email","email");
     dinfo("funnel_login_method", {method:"email"});
     const { error }=await sb.auth.signInWithOtp({ email, options:{ shouldCreateUser:true } });
     if(error) return toast(error.message);
@@ -1218,6 +1356,7 @@ document.addEventListener("click", async (e)=>{
   if(act==="phone-send"){
     const phone=(document.getElementById("fPhone").value||"").trim();
     if(phone.length<8) return toast("Sahi number daalo");
+    formSubmit("login_phone","phone");
     dinfo("funnel_login_method", {method:"phone"});
     const { error }=await sb.auth.signInWithOtp({ phone });
     if(error) return toast(error.message);
@@ -1234,6 +1373,7 @@ document.addEventListener("click", async (e)=>{
     attemptOk(a); return;
   }
   if(act==="login-anon"){
+    formSubmit("login_anon","anon");
     const a=attempt("login_anonymous"); dinfo("funnel_login_method", {method:"anonymous"});
     const { error }=await sb.auth.signInAnonymously();
     if(error){ attemptFail(a, error.message); return toast("Anonymous login band hai — Supabase me enable karo"); }
@@ -1253,13 +1393,15 @@ document.addEventListener("click", async (e)=>{
   if(act==="diag-md") return downloadFile(diagFile("md").name, diagFile("md").text, diagFile("md").mime);
   if(act==="diag-txt") return downloadFile(diagFile("txt").name, diagFile("txt").text, diagFile("txt").mime);
   if(act==="diag-filter"){ diag.filter=actEl.getAttribute("data-level")||"all"; return render(); }
+  if(act==="fb-rate"){ diag.fb=Number(actEl.getAttribute("data-rate"))||null; toast("Rating "+diag.fb+"★"); return render(); }
+  if(act==="fb-submit"){ const ta=document.getElementById("fbText"); const t=(ta&&ta.value)||""; dinfo("feedback_submitted", { rating:diag.fb, page:screenName(), comment_len:t.trim().length }); toast("Feedback bhej diya 🙏"); diag.fb=null; return render(); }
 
   if(act==="post") return createPost();
 
   if(act==="like"){
     if(!user){ toast("Like karne ke liye sign in karo"); go("/login"); render(); return; }
     const liked=myLikes.has(id);
-    diagLog("like_toggle", {postId:id, liked:!liked});
+    dinfo("post_like_result", { post_id:id, outcome: liked?"unliked":"liked" });
     if(liked){
       myLikes.delete(id);
       await sb.from("likes").delete().eq("post_id",id).eq("user_id",user.id);
@@ -1282,8 +1424,8 @@ document.addEventListener("click", async (e)=>{
     const input=document.querySelector(`[data-cinput="${id}"]`);
     const text=(input.value||"").trim(); if(!text) return;
     const { error }=await sb.from("comments").insert({ post_id:id, author:user.id, text });
-    if(error){ diagError("comment_failed", error.message); return toast(error.message); }
-    diagLog("comment_added", {postId:id});
+    if(error){ diagError("comment_submit_result", error.message, {outcome:"failed"}); return toast(error.message); }
+    dinfo("comment_submit_result", { post_id:id, outcome:"success" });
     input.value="";
     const p=posts.find(x=>x.id===id);
     if(p && p.comments && p.comments[0]) p.comments[0].count++;
@@ -1349,18 +1491,19 @@ document.getElementById("edSave").onclick=async ()=>{
    BOOT
    ============================================================ */
 (async function boot(){
-  diagLog("app_start", {version:APP_VERSION, url:location.href});
+  dinfo("session_start", { start_type:"warm", app_version:APP_VERSION });
   if(!CONFIGURED){ viewSetup(); return; }
   const { data:{ session } }=await sb.auth.getSession();
   user=session?session.user:null;
   if(user) await ensureProfile();
+  if(user) await setUserHash(user.id);
   render();
   if(user) loadFeed();
   capturePermissions();
   sb.auth.onAuthStateChange(async (event, s)=>{
-    diagLog("auth_state", {event});
-    if(event==="SIGNED_IN" && s && (!user || user.id!==s.user.id)){ user=s.user; diagLog("signed_in", {anonymous:!!s.user.is_anonymous}); await afterAuth(); }
-    if(event==="SIGNED_OUT"){ user=null; profile=null; diagLog("signed_out"); render(); }
+    dinfo("auth_state_change", { outcome:"event", auth_event:event });
+    if(event==="SIGNED_IN" && s && (!user || user.id!==s.user.id)){ user=s.user; await setUserHash(s.user.id); dinfo("auth_state_change", {outcome:"signed_in", method:s.user.is_anonymous?"anonymous":"identity"}); trackConversion("sign_in", null, s.user.is_anonymous?"anonymous":"identity"); await afterAuth(); }
+    if(event==="SIGNED_OUT"){ user=null; profile=null; setUserHash(null); dinfo("auth_state_change", {outcome:"signed_out"}); render(); }
   });
 })();
 </script>
