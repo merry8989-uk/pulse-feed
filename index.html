@@ -443,6 +443,7 @@ function markTTFV(label){
 let _notionLast=0, _notionTimer=null;
 const NOTION_PAGE_KEY = "pulse_notion_page_";
 const NOTION_SENT_KEY = "pulse_notion_sent_";
+const NOTION_STATUS_KEY = "pulse_notion_status";
 function notionReady(){ return diag.enabled && NOTION_SINK_URL && NOTION_SINK_URL.indexOf("http")===0; }
 function notionState(){
   return {
@@ -450,7 +451,9 @@ function notionState(){
     sent: Number(localStorage.getItem(NOTION_SENT_KEY+SESSION.id)||0) || 0
   };
 }
-async function notionSend(reason){
+function notionStatus(){ try{ return JSON.parse(localStorage.getItem(NOTION_STATUS_KEY)||"null"); }catch(e){ return null; } }
+function setNotionStatus(s){ try{ localStorage.setItem(NOTION_STATUS_KEY, JSON.stringify(s)); }catch(e){} }
+async function notionSend(reason, useKeepalive){
   if(!notionReady()) return;
   const st = notionState();
   const full = diagReport();
@@ -459,16 +462,28 @@ async function notionSend(reason){
   const slim = Object.assign({}, full, { logs: [] });                    /* payload halka rakho */
   let payload;
   try{ payload = JSON.stringify({ reason, report: slim, page_id: st.pageId, new_events: newEvents }); }catch(e){ return; }
+  const headers = { "Content-Type":"application/json" };
+  if(CONFIGURED && SUPABASE_ANON_KEY){ headers["Authorization"]="Bearer "+SUPABASE_ANON_KEY; headers["apikey"]=SUPABASE_ANON_KEY; }
+  const attempt = { at:new Date().toISOString(), reason, events:newEvents.length, bytes:payload.length, status:null, ok:false, error:null, response:null };
+  const send = (keep) => fetch(NOTION_SINK_URL, { method:"POST", headers, body:payload, keepalive:!!keep });
+  let res=null;
+  try{ res = await send(useKeepalive); }
+  catch(e1){
+    /* keepalive + bada body browsers me fail hota hai → bina keepalive dobara try */
+    attempt.error = String((e1 && e1.message) || e1);
+    try{ res = await send(false); }catch(e2){ attempt.error = String((e2 && e2.message) || e2); setNotionStatus(attempt); return; }
+  }
   try{
-    const headers = { "Content-Type":"application/json" };
-    if(CONFIGURED && SUPABASE_ANON_KEY){ headers["Authorization"]="Bearer "+SUPABASE_ANON_KEY; headers["apikey"]=SUPABASE_ANON_KEY; }
-    const res = await fetch(NOTION_SINK_URL, { method:"POST", headers, body:payload, keepalive:true });
+    attempt.status = res.status;
     const data = await res.json().catch(()=>null);
-    if(data && data.ok){
+    attempt.response = data ? (data.error || (data.ok ? "ok" : JSON.stringify(data).slice(0,300))) : null;
+    if(res.ok && data && data.ok){
+      attempt.ok = true;
       if(data.page_id) localStorage.setItem(NOTION_PAGE_KEY+SESSION.id, data.page_id);
       localStorage.setItem(NOTION_SENT_KEY+SESSION.id, String(full.logs.length));
     }
-  }catch(e){ /* silent — diagnostics must never break the app */ }
+  }catch(e){ attempt.error = "response_read_failed"; }
+  setNotionStatus(attempt);
 }
 function notionSendDebounced(reason, ms){
   if(!notionReady()) return;
@@ -480,7 +495,7 @@ function notionSendDebounced(reason, ms){
 }
 /* Automatic + silent — user ko kuch karna nahi hai (koi button/notice nahi). */
 setInterval(()=>{ notionSend("periodic"); }, 120000);
-window.addEventListener("pagehide", ()=>{ notionSend("pagehide"); });
+window.addEventListener("pagehide", ()=>{ notionSend("pagehide", true); });
 
 /* ---- form lifecycle (form_start / form_submit / form_abandon) ---- */
 function formStart(id, step){
@@ -588,7 +603,7 @@ window.addEventListener("visibilitychange", ()=>{
   if(document.visibilityState==="hidden"){
     formAbandonAll();
     dinfo("session_checkpoint", { duration_ms:Date.now()-SESSION.startedMs, scroll_depth:diag.maxScroll, log_count:diag.logs.length });
-    notionSend("session_end");
+    notionSend("session_end", true);
   }
 });
 window.addEventListener("online", ()=>dinfo("network_state", { network_type:networkType(), online:true }));
@@ -938,6 +953,7 @@ function viewDiagnostics(){
   const flt=(id,label)=>`<button class="chip ${f===id?"active":""}" data-act="diag-filter" data-level="${id}">${label}</button>`;
   const deadTop=Object.entries(r.dead_click_map||{}).sort((a,b)=>b[1]-a[1]).slice(0,5).map(x=>x[0]+" ("+x[1]+")").join(", ");
   const topEvents=Object.entries(r.event_counts||{}).sort((a,b)=>b[1]-a[1]).slice(0,8).map(x=>`<div><span>${esc(x[0])}</span><b>${x[1]}</b></div>`).join("") || `<div class="pmuted">—</div>`;
+  const ns=notionStatus();
   app.innerHTML=`
     <button class="back" data-go="#/settings">← Settings</button>
     <div class="card">
@@ -958,6 +974,16 @@ function viewDiagnostics(){
         <button class="btn" data-act="diag-clean" style="grid-column:1 / -1">🧹 Clean logs</button>
       </div>
       <div class="note"><b>Email report</b> se ${DIAG_EMAIL} pe compose khulega — events pehle se bhare honge, sirf Send dabana hai. Bade logs ke liye <b>Share</b> ya <b>Export</b> — poori file attach ho jaati hai.</div>
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:8px">Notion sync</div>
+      <div class="kv">
+        <div><span>configured</span><b>${notionReady()?"yes":"no"}</b></div>
+        <div><span>last attempt</span><b>${ns?esc(String(ns.at).slice(11,19)):"—"}</b></div>
+        <div><span>http status</span><b>${ns&&ns.status!=null?ns.status:"—"}</b></div>
+        <div><span>result</span><b style="color:${ns&&ns.ok?"var(--green)":"var(--danger)"}">${ns?(ns.ok?"ok":esc(ns.error||ns.response||"failed")):"—"}</b></div>
+      </div>
+      <button class="btn block" style="margin-top:12px" data-act="notion-sync-now">Sync now</button>
     </div>
     <div class="card">
       <div style="font-weight:700;margin-bottom:8px">Web vitals (RUM)</div>
@@ -1440,6 +1466,7 @@ document.addEventListener("click", async (e)=>{
   if(act==="diag-md") return downloadFile(diagFile("md").name, diagFile("md").text, diagFile("md").mime);
   if(act==="diag-txt") return downloadFile(diagFile("txt").name, diagFile("txt").text, diagFile("txt").mime);
   if(act==="diag-filter"){ diag.filter=actEl.getAttribute("data-level")||"all"; return render(); }
+  if(act==="notion-sync-now"){ if(!notionReady()){ toast("Notion sync off hai"); return; } toast("Sync kar raha hoon…"); notionSend("manual"); setTimeout(()=>render(), 3000); return; }
   if(act==="fb-rate"){ diag.fb=Number(actEl.getAttribute("data-rate"))||null; toast("Rating "+diag.fb+"★"); return render(); }
   if(act==="fb-submit"){ const ta=document.getElementById("fbText"); const t=(ta&&ta.value)||""; dinfo("feedback_submitted", { rating:diag.fb, page:screenName(), comment_len:t.trim().length }); toast("Feedback bhej diya 🙏"); diag.fb=null; return render(); }
 
