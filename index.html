@@ -135,6 +135,25 @@
   .preview .pdfthumb canvas{max-width:110px;border-radius:8px;display:block}
   .reader-nav{display:flex;gap:10px;padding:12px 14px;border-top:1px solid var(--border)}
   .reader-nav .btn{flex:1;justify-content:center;display:flex}
+  /* settings + diagnostics */
+  .setrow{display:flex;gap:14px;align-items:center;justify-content:space-between;margin-top:12px}
+  .switch{width:56px;height:32px;border-radius:20px;border:1px solid var(--border);background:var(--bg2);position:relative;flex:0 0 auto;transition:.15s;padding:0}
+  .switch span{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#8b93a7;transition:.15s}
+  .switch.on{background:var(--accent-soft);border-color:var(--accent)}
+  .switch.on span{left:28px;background:var(--accent)}
+  .dgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+  .dgrid .btn{justify-content:center;display:flex}
+  .kv div{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px}
+  .kv div:last-child{border-bottom:none}
+  .kv span{color:var(--muted);word-break:break-word}
+  .kv b{text-align:right;word-break:break-word;font-weight:600}
+  .logbox{max-height:340px;overflow:auto;background:#0b0d11;border:1px solid var(--border);border-radius:10px;padding:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.65}
+  .logline{white-space:pre-wrap;word-break:break-word;color:#c7cbd6}
+  .logline.error{color:#ff9d9d}
+  .logline .lt{color:#6b7280}
+  .logline .lv{color:#7c5cff;font-weight:700}
+  .logline.error .lv{color:#ef4444}
+  .logline .ld{color:#8b93a7}
 </style>
 </head>
 <body>
@@ -225,6 +244,133 @@ function anonTag(){
   return a[Math.floor(Math.random()*a.length)]+" #"+Math.floor(1000+Math.random()*9000);
 }
 
+/* ============================================================
+   DIAGNOSTICS
+   ============================================================ */
+const DIAG_EMAIL = "br19shc39@gmail.com";
+const DIAG_KEY = "pulse_diag";
+const DIAG_LOGS_KEY = "pulse_diag_logs";
+const APP_VERSION = "2.2.0";
+const diag = {
+  enabled: localStorage.getItem(DIAG_KEY) !== "off",
+  logs: [],
+  sessionId: Math.random().toString(36).slice(2,10),
+  startedAt: new Date().toISOString(),
+  max: 600
+};
+try{ if(diag.enabled){ diag.logs = JSON.parse(localStorage.getItem(DIAG_LOGS_KEY)||"[]") || []; } }catch(e){ diag.logs=[]; }
+
+function diagPush(level, event, data){
+  if(!diag.enabled) return;
+  diag.logs.push({ t:new Date().toISOString(), level, event, data: data===undefined?null:data });
+  if(diag.logs.length>diag.max) diag.logs=diag.logs.slice(-diag.max);
+  try{ localStorage.setItem(DIAG_LOGS_KEY, JSON.stringify(diag.logs)); }catch(e){}
+}
+const diagLog = (event, data)=>diagPush("info", event, data);
+function diagError(event, err){
+  const msg = (err && (err.message || (err.reason && err.reason.message))) || String(err);
+  diagPush("error", event, String(msg).slice(0,500));
+}
+function setDiag(on){
+  diag.enabled = on;
+  localStorage.setItem(DIAG_KEY, on ? "on" : "off");
+  if(!on){ diag.logs=[]; localStorage.removeItem(DIAG_LOGS_KEY); }
+  else { diagLog("diagnostics_enabled"); }
+  render();
+}
+window.addEventListener("error", e=>diagError("window_error", (e.message||"")+" @ "+(e.filename||"")+":"+(e.lineno||"")));
+window.addEventListener("unhandledrejection", e=>diagError("promise_rejection", e.reason));
+
+function diagEnv(){
+  const nav=navigator;
+  const conn=nav.connection||nav.mozConnection||nav.webkitConnection||{};
+  let storage=false;
+  try{ localStorage.setItem("__t","1"); localStorage.removeItem("__t"); storage=true; }catch(e){}
+  return {
+    app:"Pulse", version:APP_VERSION, generatedAt:new Date().toISOString(),
+    url:location.href, sessionId:diag.sessionId, sessionStarted:diag.startedAt,
+    userAgent:nav.userAgent, platform:nav.platform||"", language:nav.language,
+    timezone:Intl.DateTimeFormat().resolvedOptions().timeZone, tzOffsetMin:new Date().getTimezoneOffset(),
+    screen:`${screen.width}x${screen.height} @${window.devicePixelRatio}x`,
+    viewport:`${window.innerWidth}x${window.innerHeight}`,
+    online:nav.onLine, connection:conn.effectiveType||"unknown", downlinkMbps:conn.downlink||null,
+    cookiesEnabled:nav.cookieEnabled, localStorage:storage,
+    supabaseConfigured:CONFIGURED,
+    supabaseHost:CONFIGURED ? SUPABASE_URL.replace(/^https?:\/\//,"") : null,
+    signedIn:!!user, anonymous:user? !!user.is_anonymous : false,
+    userId:user? user.id.slice(0,8)+"…" : null, displayName:profile? profile.name : null,
+    postsLoaded:posts.length, diagnosticsEnabled:diag.enabled,
+    logCount:diag.logs.length, errorCount:diag.logs.filter(l=>l.level==="error").length
+  };
+}
+function diagReport(){
+  return { meta:{ app:"Pulse Diagnostics", version:APP_VERSION, sessionId:diag.sessionId, generatedAt:new Date().toISOString(), contact:DIAG_EMAIL }, environment:diagEnv(), logs:diag.logs };
+}
+function diagDataStr(d){ if(d===null||d===undefined) return ""; return typeof d==="string"? d : JSON.stringify(d); }
+function fmtTxt(r){
+  let s="PULSE — DIAGNOSTICS REPORT\n===========================\n";
+  s+="Generated: "+r.meta.generatedAt+"\nSession: "+r.meta.sessionId+"\nContact: "+r.meta.contact+"\n\n== ENVIRONMENT ==\n";
+  for(const [k,v] of Object.entries(r.environment)) s+=k+": "+v+"\n";
+  s+="\n== LOGS ("+r.logs.length+") ==\n";
+  for(const l of r.logs) s+="["+l.t+"] "+l.level.toUpperCase()+" "+l.event+(l.data!==null?" :: "+diagDataStr(l.data):"")+"\n";
+  return s;
+}
+function fmtMd(r){
+  let s="# Pulse — Diagnostics Report\n\n";
+  s+="- **Generated:** "+r.meta.generatedAt+"\n- **Session:** "+r.meta.sessionId+"\n- **Contact:** "+r.meta.contact+"\n\n";
+  s+="## Environment\n\n| Field | Value |\n| --- | --- |\n";
+  for(const [k,v] of Object.entries(r.environment)) s+="| "+k+" | "+String(v).replace(/\|/g,"\\|")+" |\n";
+  s+="\n## Logs ("+r.logs.length+")\n\n| Time | Level | Event | Data |\n| --- | --- | --- | --- |\n";
+  for(const l of r.logs) s+="| "+l.t+" | "+l.level+" | "+l.event+" | "+diagDataStr(l.data).replace(/\|/g,"\\|")+" |\n";
+  return s;
+}
+function csvCell(v){ v=String(v==null?"":v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+function fmtCsv(r){
+  let s="time,level,event,data\n";
+  s+="# environment,"+csvCell(JSON.stringify(r.environment))+",,\n";
+  for(const l of r.logs) s+=[l.t,l.level,l.event,diagDataStr(l.data)].map(csvCell).join(",")+"\n";
+  return s;
+}
+const fmtJson = (r)=>JSON.stringify(r,null,2);
+function diagFile(fmt){
+  const r=diagReport(), base="pulse-diagnostics-"+diag.sessionId;
+  if(fmt==="json") return {name:base+".json", text:fmtJson(r), mime:"application/json"};
+  if(fmt==="md")   return {name:base+".md",   text:fmtMd(r),   mime:"text/markdown"};
+  if(fmt==="csv")  return {name:base+".csv",  text:fmtCsv(r),  mime:"text/csv"};
+  return {name:base+".txt", text:fmtTxt(r), mime:"text/plain"};
+}
+function downloadFile(name, text, mime){
+  const blob=new Blob([text],{type:(mime||"text/plain")+";charset=utf-8"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
+  diagLog("diag_export", name);
+}
+async function diagShare(fmt){
+  const f=diagFile(fmt);
+  try{
+    const file=new File([f.text], f.name, {type:f.mime});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file], title:"Pulse diagnostics", text:"Pulse diagnostics report"});
+    } else if(navigator.share){
+      await navigator.share({title:"Pulse diagnostics", text:f.text});
+    } else {
+      await navigator.clipboard.writeText(f.text); toast("Share support nahi — report copy kar di");
+    }
+    diagLog("diag_share", f.name);
+  }catch(e){}
+}
+function diagEmail(){
+  diagLog("diag_email", diag.sessionId);
+  const r=diagReport();
+  const body=fmtTxt(r);
+  const subj="Pulse Diagnostics — "+diag.sessionId+" ("+r.environment.errorCount+" errors)";
+  const max=1800;
+  const clipped = body.length>max ? body.slice(0,max)+"\n\n…(poora report Share/Export se bhejo)" : body;
+  window.location.href="mailto:"+DIAG_EMAIL+"?subject="+encodeURIComponent(subj)+"&body="+encodeURIComponent(clipped);
+}
+
 /* ---------- state ---------- */
 let user = null;        // auth user
 let profile = null;     // profile row
@@ -265,17 +411,21 @@ function render(){
   if(r[0]==="login") return viewLogin();
   if(r[0]==="profile") return viewProfile(r[1]);
   if(r[0]==="post") return viewPost(r[1]);
+  if(r[0]==="settings") return viewSettings();
+  if(r[0]==="diagnostics") return viewDiagnostics();
   return viewFeed();
 }
 
 function renderHeader(){
   const box=document.getElementById("hauth");
+  const gear=`<button class="btn sm ghost" data-go="#/settings" title="Settings" aria-label="Settings">⚙️</button>`;
   if(user && profile){
-    box.innerHTML=`<div style="display:flex;align-items:center;gap:9px">
+    box.innerHTML=`<div style="display:flex;align-items:center;gap:9px">${gear}
       <button class="btn sm ghost" data-go="#/profile/${user.id}">${avatarHTML(profile,"sm")}</button>
       <button class="btn sm" data-act="signout">Sign out</button></div>`;
   } else {
-    box.innerHTML=`<button class="btn primary sm" data-go="#/login">Sign in</button>`;
+    box.innerHTML=`<div style="display:flex;align-items:center;gap:9px">${gear}
+      <button class="btn primary sm" data-go="#/login">Sign in</button></div>`;
   }
 }
 
@@ -349,7 +499,7 @@ async function afterAuth(){
   render();
   loadFeed();
 }
-function signOut(){ sb.auth.signOut().then(()=>{ user=null; profile=null; toast("Signed out"); go("/feed"); render(); }); }
+function signOut(){ diagLog("signout_requested"); sb.auth.signOut().then(()=>{ user=null; profile=null; toast("Signed out"); go("/feed"); render(); }); }
 
 /* ============================================================
    FEED / DATA
@@ -382,9 +532,69 @@ async function loadFeed(){
   if(!CONFIGURED) return;
   await loadMyLikes();
   const { data, error } = await fetchPosts();
-  if(error){ console.error(error); toast("Feed load nahi hua"); return; }
+  if(error){ console.error(error); diagError("feed_load_failed", error.message); toast("Feed load nahi hua"); return; }
   posts=data||[];
+  diagLog("feed_loaded", {count:posts.length});
   render();
+}
+
+function viewSettings(){
+  const app=document.getElementById("app");
+  app.innerHTML=`
+    <button class="back" data-go="#/feed">← Feed</button>
+    <div class="card">
+      <div class="pname" style="font-size:17px">Settings</div>
+      <div class="setrow">
+        <div>
+          <div style="font-weight:700">Diagnostics</div>
+          <div class="pmuted">App ke technical logs collect karo — problem report karne ke liye. Password ya private data store nahi hota.</div>
+        </div>
+        <button class="switch ${diag.enabled?"on":""}" data-act="toggle-diag" aria-label="Toggle diagnostics"><span></span></button>
+      </div>
+      <button class="btn block" style="margin-top:16px" data-go="#/diagnostics">Open diagnostics report →</button>
+      <div class="note">Default: <b>ON</b>. Off karne se logs collect hona band ho jaata hai aur maujooda logs delete ho jaate hain.</div>
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:6px">About</div>
+      <div class="pmuted">Pulse v${APP_VERSION} · Session ${diag.sessionId}</div>
+      <div class="pmuted">Support: ${DIAG_EMAIL}</div>
+    </div>`;
+}
+
+function viewDiagnostics(){
+  const app=document.getElementById("app");
+  const r=diagReport(), e=r.environment;
+  const rows=diag.logs.slice().reverse().slice(0,150).map(l=>
+    `<div class="logline ${l.level}"><span class="lt">${esc(l.t.slice(11,19))}</span> <span class="lv">${l.level==="error"?"ERR":"INF"}</span> ${esc(l.event)}${l.data!==null?` <span class="ld">${esc(diagDataStr(l.data))}</span>`:""}</div>`
+  ).join("") || `<div class="pmuted">Koi log nahi.</div>`;
+  app.innerHTML=`
+    <button class="back" data-go="#/settings">← Settings</button>
+    <div class="card">
+      <div class="pname" style="font-size:17px">Diagnostics</div>
+      <div class="pmuted" style="margin-top:4px">Status: <b style="color:${diag.enabled?"var(--green)":"var(--danger)"}">${diag.enabled?"ON":"OFF"}</b> · ${diag.logs.length} entries · ${e.errorCount} errors</div>
+      <div class="pmuted">Session ${diag.sessionId} · started ${esc(diag.startedAt.slice(11,19))} UTC</div>
+      ${diag.enabled?"":`<div class="note" style="border-color:#5a3030">Diagnostics OFF hai — logs collect nahi ho rahe. Settings me on karo.</div>`}
+      <div class="dgrid">
+        <button class="btn" data-act="diag-refresh">🔄 Refresh</button>
+        <button class="btn" data-act="diag-share">📤 Share</button>
+        <button class="btn primary" data-act="diag-email">✉️ Email report</button>
+        <button class="btn" data-act="diag-copy">📋 Copy</button>
+        <button class="btn" data-act="diag-csv">📊 Excel (CSV)</button>
+        <button class="btn" data-act="diag-json">⬇️ JSON</button>
+        <button class="btn" data-act="diag-md">⬇️ Markdown</button>
+        <button class="btn" data-act="diag-txt">⬇️ Text</button>
+        <button class="btn" data-act="diag-clean" style="grid-column:1 / -1">🧹 Clean logs</button>
+      </div>
+      <div class="note"><b>Email report</b> se ${DIAG_EMAIL} pe compose khulega — logs pehle se bhare honge, sirf Send dabana hai. Bade logs ke liye <b>Share</b> ya <b>Export</b> use karo — usme poori file attach ho jaati hai.</div>
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:8px">Environment</div>
+      <div class="kv">${Object.entries(e).map(([k,v])=>`<div><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join("")}</div>
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:8px">Recent logs</div>
+      <div class="logbox">${rows}</div>
+    </div>`;
 }
 
 function viewFeed(){
@@ -619,7 +829,7 @@ async function createPost(){
       const ext=(f.name.split(".").pop()||"bin").toLowerCase().slice(0,5);
       const path=`${user.id}/${crypto.randomUUID()}.${ext}`;
       const up=await sb.storage.from("media").upload(path, f, {cacheControl:"3600", upsert:false});
-      if(up.error){ console.error(up.error); toast("Upload fail: "+up.error.message); return; }
+      if(up.error){ console.error(up.error); diagError("upload_failed", up.error.message); toast("Upload fail: "+up.error.message); return; }
       const url=sb.storage.from("media").getPublicUrl(path).data.publicUrl;
       const kind=(f.type==="application/pdf"||ext==="pdf")?"pdf":(f.type.startsWith("video")?"video":"image");
       media.push({url, path, kind});
@@ -632,10 +842,12 @@ async function createPost(){
   }
   let ins=await sb.from("posts").insert({ author:user.id, type, text, media_url, media_path, media });
   if(ins.error && /media/i.test(ins.error.message||"")){
+    diagLog("post_insert_retry", {reason:"media column missing"});
     ins=await sb.from("posts").insert({ author:user.id, type, text, media_url, media_path });
   }
   const error=ins.error;
-  if(error){ console.error(error); toast("Post fail: "+error.message); return; }
+  if(error){ console.error(error); diagError("post_create_failed", error.message); toast("Post fail: "+error.message); return; }
+  diagLog("post_created", {type, media:media.length});
   clearPreview();
   toast("Posted! 🎉");
   go("/feed");
@@ -683,6 +895,7 @@ async function hydratePdfThumbs(){
 let pdfDoc=null, pdfPageNo=1;
 async function openPdfReader(url){
   if(!url) return;
+  diagLog("pdf_open");
   const ov=document.getElementById("pdfReader");
   ov.classList.add("show");
   pdfPageNo=1; pdfDoc=null;
@@ -695,7 +908,7 @@ async function openPdfReader(url){
     pdfDoc=await window.pdfjsLib.getDocument(url).promise;
     document.getElementById("pdfCount").textContent=pdfDoc.numPages;
     await renderPdfPage();
-  }catch(err){ console.error(err); pdfFallback(url); }
+  }catch(err){ console.error(err); diagError("pdf_render_failed", err && err.message); pdfFallback(url); }
 }
 function pdfFallback(url){
   const wrap=document.getElementById("pdfCanvasWrap");
@@ -801,11 +1014,23 @@ document.addEventListener("click", async (e)=>{
 
   if(act==="open-pdf") return openPdfReader(actEl.getAttribute("data-url"));
 
+  if(act==="toggle-diag") return setDiag(!diag.enabled);
+  if(act==="diag-refresh"){ diagLog("diag_refresh"); toast("Refresh ho gaya"); return render(); }
+  if(act==="diag-clean"){ if(!confirm("Saare logs delete karein?")) return; diag.logs=[]; localStorage.removeItem(DIAG_LOGS_KEY); toast("Logs clean 🧹"); return render(); }
+  if(act==="diag-copy"){ diagLog("diag_copy"); try{ await navigator.clipboard.writeText(fmtTxt(diagReport())); toast("Report copy ho gaya 📋"); }catch(err){ toast("Copy fail"); } return; }
+  if(act==="diag-email") return diagEmail();
+  if(act==="diag-share") return diagShare("txt");
+  if(act==="diag-csv") return downloadFile(diagFile("csv").name, diagFile("csv").text, diagFile("csv").mime);
+  if(act==="diag-json") return downloadFile(diagFile("json").name, diagFile("json").text, diagFile("json").mime);
+  if(act==="diag-md") return downloadFile(diagFile("md").name, diagFile("md").text, diagFile("md").mime);
+  if(act==="diag-txt") return downloadFile(diagFile("txt").name, diagFile("txt").text, diagFile("txt").mime);
+
   if(act==="post") return createPost();
 
   if(act==="like"){
     if(!user){ toast("Like karne ke liye sign in karo"); go("/login"); render(); return; }
     const liked=myLikes.has(id);
+    diagLog("like_toggle", {postId:id, liked:!liked});
     if(liked){
       myLikes.delete(id);
       await sb.from("likes").delete().eq("post_id",id).eq("user_id",user.id);
@@ -828,7 +1053,8 @@ document.addEventListener("click", async (e)=>{
     const input=document.querySelector(`[data-cinput="${id}"]`);
     const text=(input.value||"").trim(); if(!text) return;
     const { error }=await sb.from("comments").insert({ post_id:id, author:user.id, text });
-    if(error) return toast(error.message);
+    if(error){ diagError("comment_failed", error.message); return toast(error.message); }
+    diagLog("comment_added", {postId:id});
     input.value="";
     const p=posts.find(x=>x.id===id);
     if(p && p.comments && p.comments[0]) p.comments[0].count++;
@@ -894,6 +1120,7 @@ document.getElementById("edSave").onclick=async ()=>{
    BOOT
    ============================================================ */
 (async function boot(){
+  diagLog("app_start", {version:APP_VERSION, url:location.href});
   if(!CONFIGURED){ viewSetup(); return; }
   const { data:{ session } }=await sb.auth.getSession();
   user=session?session.user:null;
@@ -901,8 +1128,9 @@ document.getElementById("edSave").onclick=async ()=>{
   render();
   if(user) loadFeed();
   sb.auth.onAuthStateChange(async (event, s)=>{
-    if(event==="SIGNED_IN" && s && (!user || user.id!==s.user.id)){ user=s.user; await afterAuth(); }
-    if(event==="SIGNED_OUT"){ user=null; profile=null; render(); }
+    diagLog("auth_state", {event});
+    if(event==="SIGNED_IN" && s && (!user || user.id!==s.user.id)){ user=s.user; diagLog("signed_in", {anonymous:!!s.user.is_anonymous}); await afterAuth(); }
+    if(event==="SIGNED_OUT"){ user=null; profile=null; diagLog("signed_out"); render(); }
   });
 })();
 </script>
