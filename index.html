@@ -441,15 +441,33 @@ function markTTFV(label){
 
 /* ---- Notion sink: session report → Notion (via secure Edge Function) ---- */
 let _notionLast=0, _notionTimer=null;
+const NOTION_PAGE_KEY = "pulse_notion_page_";
+const NOTION_SENT_KEY = "pulse_notion_sent_";
 function notionReady(){ return diag.enabled && NOTION_SINK_URL && NOTION_SINK_URL.indexOf("http")===0; }
+function notionState(){
+  return {
+    pageId: localStorage.getItem(NOTION_PAGE_KEY+SESSION.id) || null,
+    sent: Number(localStorage.getItem(NOTION_SENT_KEY+SESSION.id)||0) || 0
+  };
+}
 async function notionSend(reason){
   if(!notionReady()) return;
+  const st = notionState();
+  const full = diagReport();
+  const newEvents = full.logs.slice(st.sent);
+  if(st.pageId && newEvents.length===0 && reason!=="manual") return;   /* kuch naya nahi */
+  const slim = Object.assign({}, full, { logs: [] });                    /* payload halka rakho */
   let payload;
-  try{ payload = JSON.stringify({ reason, report: diagReport() }); }catch(e){ return; }
+  try{ payload = JSON.stringify({ reason, report: slim, page_id: st.pageId, new_events: newEvents }); }catch(e){ return; }
   try{
     const headers = { "Content-Type":"application/json" };
     if(CONFIGURED && SUPABASE_ANON_KEY){ headers["Authorization"]="Bearer "+SUPABASE_ANON_KEY; headers["apikey"]=SUPABASE_ANON_KEY; }
-    await fetch(NOTION_SINK_URL, { method:"POST", headers, body:payload, keepalive:true });
+    const res = await fetch(NOTION_SINK_URL, { method:"POST", headers, body:payload, keepalive:true });
+    const data = await res.json().catch(()=>null);
+    if(data && data.ok){
+      if(data.page_id) localStorage.setItem(NOTION_PAGE_KEY+SESSION.id, data.page_id);
+      localStorage.setItem(NOTION_SENT_KEY+SESSION.id, String(full.logs.length));
+    }
   }catch(e){ /* silent — diagnostics must never break the app */ }
 }
 function notionSendDebounced(reason, ms){
