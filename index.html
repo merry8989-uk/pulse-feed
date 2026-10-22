@@ -219,6 +219,17 @@ const sb = CONFIGURED ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 /* ---------- helpers ---------- */
 const esc = (s)=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+/* raw DB errors user ko mat dikhao — friendly message */
+function friendlyError(err, fallback){
+  const m=String((err && err.message)||err||"");
+  if(/row-level security|permission denied|not authorized/i.test(m)) return "Permission nahi hai";
+  if(/JWT|token is expired|invalid claim/i.test(m)) return "Session expire ho gaya — dobara sign in karo";
+  if(/Failed to fetch|NetworkError|load failed/i.test(m)) return "Internet check karo";
+  if(/duplicate key|already exists/i.test(m)) return "Ye already maujood hai";
+  if(/too large|exceeded/i.test(m)) return "File bahut badi hai";
+  if(/does not exist|schema cache/i.test(m)) return "Database setup adhoora hai (SQL chalao)";
+  return fallback || "Kuch galat ho gaya";
+}
 const COLORS = ["#7c5cff","#ec4899","#22c55e","#f59e0b","#06b6d4","#ef4444","#8b5cf6","#14b8a6"];
 const colorFor = (id)=>{let h=0;for(const c of String(id))h=(h*31+c.charCodeAt(0))>>>0;return COLORS[h%COLORS.length];};
 function timeAgo(ts){
@@ -258,7 +269,7 @@ const DIAG_KEY = "pulse_diag";
 const DIAG_LOGS_KEY = "pulse_diag_logs";
 const DIAG_SALT_KEY = "pulse_diag_salt";
 const SCHEMA_VERSION = "1.0.0";
-const APP_VERSION = "4.0.0";
+const APP_VERSION = "4.1.0";
 const RELEASE_CHANNEL = /[?&]beta=1/.test(location.search) ? "beta" : "production";
 const DIAG_RETENTION = { error:30, warn:14, info:7, debug:1 };   /* days, per log class */
 const DIAG_MAX = 1200;
@@ -594,6 +605,8 @@ window.addEventListener("visibilitychange", ()=>{
     formAbandonAll();
     dinfo("session_checkpoint", { duration_ms:Date.now()-SESSION.startedMs, scroll_depth:diag.maxScroll, log_count:diag.logs.length });
     diagSinkSend("session_end");
+  } else if(CONFIGURED && user && _lastFeedAt && Date.now()-_lastFeedAt>60000){
+    loadFeed();   /* tab wapas focus pe stale feed refresh */
   }
 });
 window.addEventListener("online", ()=>dinfo("network_state", { network_type:networkType(), online:true }));
@@ -734,6 +747,8 @@ let user = null;        // auth user
 let profile = null;     // profile row
 let posts = [];         // feed
 let myLikes = new Set();
+let feedLimit = 60;     // pagination
+let _lastFeedAt = 0;    // staleness check
 const mediaURLCache = {};
 
 /* ============================================================
@@ -845,21 +860,26 @@ function viewLogin(){
 async function ensureProfile(){
   if(!user) return;
   let { data, error } = await sb.from("profiles").select("*").eq("id", user.id).maybeSingle();
-  if(error){ console.error(error); return; }
+  if(error){ console.error(error); diagError("profile_fetch_failed", error.message); }
   if(!data){
     const meta=user.user_metadata||{};
     const isAnon=!!user.is_anonymous;
-    const base=(meta.user_name||meta.preferred_username||meta.name||"user").toLowerCase().replace(/[^a-z0-9_]/g,"")||"user";
-    const row={ id:user.id, name:isAnon?"Anonymous":(meta.name||meta.full_name||base), handle:base+"_"+user.id.slice(0,4), is_anonymous:isAnon };
-    if(isAnon) row.emoji="🕶️";
-    const ins=await sb.from("profiles").insert(row).select().single();
-    data=ins.data;
+    const base=String(meta.user_name||meta.preferred_username||meta.name||"user").toLowerCase().replace(/[^a-z0-9_]/g,"").slice(0,20)||"user";
+    const mkRow=(suffix)=>({ id:user.id, name:isAnon?"Anonymous":(meta.name||meta.full_name||base), handle:(base+"_"+user.id.slice(0,4)+suffix).slice(0,30), is_anonymous:isAnon, ...(isAnon?{emoji:"🕶️"}:{}) });
+    let ins=await sb.from("profiles").insert(mkRow("")).select().single();
+    if(ins.error) ins=await sb.from("profiles").insert(mkRow("_"+Math.random().toString(36).slice(2,5))).select().single();
+    if(ins.error){
+      /* trigger ne pehle hi bana diya ho sakta hai → dobara padho */
+      const again=await sb.from("profiles").select("*").eq("id",user.id).maybeSingle();
+      data=again.data||null;
+      if(!data) diagError("profile_create_failed", ins.error.message);
+    } else data=ins.data;
   } else if(user.is_anonymous && (!data.name || data.name==="User")){
     const tag=anonTag();
     const upd=await sb.from("profiles").update({ name:"Anonymous", is_anonymous:true, emoji:data.emoji||"🕶️", handle:"anon"+tag.split("#")[1].trim() }).eq("id",user.id).select().single();
     if(upd.data) data=upd.data;
   }
-  profile=data;
+  if(data) profile=data;   /* null se overwrite mat karo warna composer gayab ho jaata hai */
 }
 
 async function afterAuth(){
@@ -888,7 +908,7 @@ const POST_SELECT = `id, type, text, media, media_url, created_at,
 function postsQuery(select, opts={}){
   let q=sb.from("posts").select(select);
   if(opts.author) q=q.eq("author", opts.author);
-  return q.order("created_at",{ascending:false}).limit(60);
+  return q.order("created_at",{ascending:false}).limit(opts.limit||60);
 }
 async function fetchPosts(opts={}){
   let res=await postsQuery(POST_SELECT, opts);
@@ -899,9 +919,10 @@ async function fetchPosts(opts={}){
 async function loadFeed(){
   if(!CONFIGURED) return;
   await loadMyLikes();
-  const { data, error } = await fetchPosts();
-  if(error){ console.error(error); diagError("feed_load_result", error.message, {outcome:"failed"}); toast("Feed load nahi hua"); return; }
+  const { data, error } = await fetchPosts({ limit: feedLimit });
+  if(error){ console.error(error); diagError("feed_load_result", error.message, {outcome:"failed"}); toast(friendlyError(error, "Feed load nahi hua")); return; }
   posts=data||[];
+  _lastFeedAt=Date.now();
   dinfo("feed_load_result", { outcome:"success", item_count:posts.length });
   markTTFV("feed_loaded");
   render();
@@ -1048,8 +1069,12 @@ function viewFeed(){
       <p class="pmuted" style="margin:6px 0 12px">GitHub, email, phone ya anonymous — koi bhi.</p>
       <button class="btn primary" data-go="#/login">Sign in / Create profile</button></div>`;
   }
-  html += posts.length ? posts.map(p=>postHTML(p)).join("")
-        : `<div class="empty"><div class="big">🌱</div>Abhi koi post nahi. Pehla post tum karo!</div>`;
+  if(posts.length){
+    html += posts.map(p=>postHTML(p)).join("");
+    if(posts.length>=feedLimit) html += `<div style="text-align:center;margin:14px 0"><button class="btn" data-act="load-more">Load more</button></div>`;
+  } else {
+    html += `<div class="empty"><div class="big">🌱</div>Abhi koi post nahi. Pehla post tum karo!</div>`;
+  }
   app.innerHTML=html;
   if(user && profile) wireComposer();
   wireCarousels();
@@ -1057,10 +1082,20 @@ function viewFeed(){
 
 function viewPost(id){
   const app=document.getElementById("app");
+  const paint=(p)=>{
+    app.innerHTML=`<button class="back" data-go="#/feed">← Feed</button>`+(p?postHTML(p):`<div class="empty">Post mila nahi.</div>`);
+    if(p){ const c=document.querySelector(".comments"); if(c){ c.classList.add("open"); loadComments(p.id); } }
+    wireCarousels();
+  };
   const p=posts.find(x=>x.id===id);
-  app.innerHTML=`<button class="back" data-go="#/feed">← Feed</button>`+(p?postHTML(p):`<div class="empty">Post mila nahi.</div>`);
-  if(p){ const c=document.querySelector(".comments"); if(c){ c.classList.add("open"); loadComments(p.id); } }
-  wireCarousels();
+  if(p) return paint(p);
+  /* shared link / fresh load: post memory me nahi hai → DB se laao */
+  app.innerHTML=`<button class="back" data-go="#/feed">← Feed</button><div class="empty">Loading…</div>`;
+  (async()=>{
+    const { data } = await sb.from("posts").select(POST_SELECT).eq("id",id).maybeSingle();
+    if(data) posts.unshift(data);
+    paint(data||null);
+  })();
 }
 
 function viewProfile(id){
@@ -1149,11 +1184,11 @@ function postHTML(p){
     ${p.text?`<div class="post-body">${esc(p.text)}</div>`:""}
     ${media}
     <div class="actions">
-      <button class="act ${liked?"liked":""}" data-act="like" data-id="${p.id}">${liked?"❤️":"🤍"} <span>${likeCount}</span></button>
-      <button class="act" data-act="toggle-comments" data-id="${p.id}">💬 <span>${cc}</span></button>
-      <button class="act" data-act="share" data-id="${p.id}">🔗 Share</button>
+      <button class="act ${liked?"liked":""}" data-act="like" data-id="${p.id}" aria-label="Like"><span class="lico">${liked?"❤️":"🤍"}</span> <span class="lcount">${likeCount}</span></button>
+      <button class="act" data-act="toggle-comments" data-id="${p.id}" aria-label="Comments"><span>💬</span> <span class="ccount">${cc}</span></button>
+      <button class="act" data-act="share" data-id="${p.id}" aria-label="Share">🔗 Share</button>
       <div style="flex:1"></div>
-      <button class="act" data-go="#/post/${p.id}">Open</button>
+      <button class="act" data-go="#/post/${p.id}" aria-label="Open post">Open</button>
     </div>
     <div class="comments" data-comments="${p.id}">
       <div class="clist"></div>
@@ -1206,17 +1241,21 @@ function wireComposer(){
     renderPreview();
   };
 }
+let _previewURLs=[];
+function objURL(f){ const u=URL.createObjectURL(f); _previewURLs.push(u); return u; }
+function revokePreviewURLs(){ _previewURLs.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(e){} }); _previewURLs=[]; }
 function renderPreview(){
   const prev=document.getElementById("cPreview");
   if(!prev) return;
+  revokePreviewURLs();
   if(!cPendingFiles.length){ prev.style.display="none"; prev.innerHTML=""; return; }
   prev.style.display="block";
   const first=cPendingFiles[0];
   const isPdf = first.type==="application/pdf" || /\.pdf$/i.test(first.name||"");
   let inner="";
-  if(first.type.startsWith("video")) inner=`<video src="${URL.createObjectURL(first)}" controls></video>`;
+  if(first.type.startsWith("video")) inner=`<video src="${objURL(first)}" controls></video>`;
   else if(isPdf) inner=`<div class="thumbs"><div class="pchip"><span class="pdfthumb" id="cPdfThumb"></span><span>📄 ${esc(first.name)}</span></div></div>`;
-  else inner=`<div class="thumbs">${cPendingFiles.map(f=>`<img src="${URL.createObjectURL(f)}" />`).join("")}</div>`;
+  else inner=`<div class="thumbs">${cPendingFiles.map(f=>`<img src="${objURL(f)}" />`).join("")}</div>`;
   prev.innerHTML=`<button class="x" id="cClear">×</button>${inner}`;
   document.getElementById("cClear").onclick=()=>{ clearPreview(); const fi=document.getElementById("cFile"); if(fi) fi.value=""; };
   if(isPdf){ const tb=document.getElementById("cPdfThumb"); if(tb) pdfThumb(first, tb); }
@@ -1235,7 +1274,7 @@ async function pdfThumb(file, box){
     await page.render({canvasContext:canvas.getContext("2d"), viewport:vp}).promise;
   }catch(e){ /* thumbnail optional */ }
 }
-function clearPreview(){ cPendingFiles=[]; const p=document.getElementById("cPreview"); if(p){ p.style.display="none"; p.innerHTML=""; } }
+function clearPreview(){ cPendingFiles=[]; revokePreviewURLs(); const p=document.getElementById("cPreview"); if(p){ p.style.display="none"; p.innerHTML=""; } }
 
 async function createPost(){
   if(!user){ toast("Pehle sign in karo"); go("/login"); render(); return; }
@@ -1249,7 +1288,7 @@ async function createPost(){
       const ext=(f.name.split(".").pop()||"bin").toLowerCase().slice(0,5);
       const path=`${user.id}/${crypto.randomUUID()}.${ext}`;
       const up=await sb.storage.from("media").upload(path, f, {cacheControl:"3600", upsert:false});
-      if(up.error){ console.error(up.error); diagError("media_upload_result", up.error.message, {outcome:"failed"}); attemptFail(aid, up.error.message, {stage:"upload"}); toast("Upload fail: "+up.error.message); return; }
+      if(up.error){ console.error(up.error); diagError("media_upload_result", up.error.message, {outcome:"failed"}); attemptFail(aid, up.error.message, {stage:"upload"}); toast(friendlyError(up.error, "Upload fail")); return; }
       const url=sb.storage.from("media").getPublicUrl(path).data.publicUrl;
       const kind=(f.type==="application/pdf"||ext==="pdf")?"pdf":(f.type.startsWith("video")?"video":"image");
       media.push({url, path, kind});
@@ -1266,7 +1305,7 @@ async function createPost(){
     ins=await sb.from("posts").insert({ author:user.id, type, text, media_url, media_path });
   }
   const error=ins.error;
-  if(error){ console.error(error); diagError("post_create_result", error.message, {outcome:"failed"}); attemptFail(aid, error.message, {stage:"insert"}); toast("Post fail: "+error.message); return; }
+  if(error){ console.error(error); diagError("post_create_result", error.message, {outcome:"failed"}); attemptFail(aid, error.message, {stage:"insert"}); toast(friendlyError(error, "Post nahi hua")); return; }
   dinfo("post_create_result", { outcome:"success", type, media_count:media.length });
   attemptOk(aid, { type, media_count:media.length });
   trackConversion("create_post", media.length||null, "feed");
@@ -1293,25 +1332,34 @@ function wireCarousels(){
   });
   hydratePdfThumbs();
 }
-async function hydratePdfThumbs(){
-  const nodes=[...document.querySelectorAll("[data-pdfthumb]")];
-  for(const n of nodes){
-    if(n.dataset.done) continue;
-    n.dataset.done="1";
-    const url=n.getAttribute("data-pdfthumb");
-    if(!url) continue;
-    try{
-      if(!window.pdfjsLib) continue;
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-      const doc=await window.pdfjsLib.getDocument(url).promise;
-      const page=await doc.getPage(1);
-      const vp=page.getViewport({scale:0.6});
-      const canvas=document.createElement("canvas");
-      canvas.width=Math.floor(vp.width); canvas.height=Math.floor(vp.height);
-      n.innerHTML=""; n.appendChild(canvas);
-      await page.render({canvasContext:canvas.getContext("2d"), viewport:vp}).promise;
-    }catch(e){ /* preview optional — icon rahega */ }
+let _pdfThumbIO=null;
+function hydratePdfThumbs(){
+  const nodes=[...document.querySelectorAll("[data-pdfthumb]")].filter(n=>!n.dataset.done && !n.dataset.queued);
+  if(!nodes.length) return;
+  if(!("IntersectionObserver" in window)){ nodes.slice(0,3).forEach(n=>renderPdfThumb(n)); return; }
+  if(!_pdfThumbIO){
+    _pdfThumbIO=new IntersectionObserver((ents)=>{
+      ents.forEach(en=>{ if(en.isIntersecting){ _pdfThumbIO.unobserve(en.target); renderPdfThumb(en.target); } });
+    }, {rootMargin:"250px 0px"});
   }
+  nodes.forEach(n=>{ n.dataset.queued="1"; _pdfThumbIO.observe(n); });
+}
+async function renderPdfThumb(n){
+  if(!n || n.dataset.done) return;
+  n.dataset.done="1";
+  const url=n.getAttribute("data-pdfthumb");
+  if(!url) return;
+  try{
+    if(!window.pdfjsLib) return;
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    const doc=await window.pdfjsLib.getDocument(url).promise;
+    const page=await doc.getPage(1);
+    const vp=page.getViewport({scale:0.6});
+    const canvas=document.createElement("canvas");
+    canvas.width=Math.floor(vp.width); canvas.height=Math.floor(vp.height);
+    n.innerHTML=""; n.appendChild(canvas);
+    await page.render({canvasContext:canvas.getContext("2d"), viewport:vp}).promise;
+  }catch(e){ /* preview optional — icon rahega */ }
 }
 
 let pdfDoc=null, pdfPageNo=1;
@@ -1461,19 +1509,28 @@ document.addEventListener("click", async (e)=>{
   if(act==="fb-submit"){ const ta=document.getElementById("fbText"); const t=(ta&&ta.value)||""; dinfo("feedback_submitted", { rating:diag.fb, page:screenName(), comment_len:t.trim().length }); toast("Feedback bhej diya 🙏"); diag.fb=null; return render(); }
 
   if(act==="post") return createPost();
+  if(act==="load-more"){ feedLimit+=60; toast("Aur posts la raha hoon…"); await loadFeed(); return; }
 
   if(act==="like"){
-    if(!user){ toast("Like karne ke liye sign in karo"); go("/login"); render(); return; }
+    if(!user){ toast("Like karne ke liye sign in karo"); return; }
     const liked=myLikes.has(id);
+    const ico=actEl.querySelector(".lico"), cnt=actEl.querySelector(".lcount");
+    const cur=Number((cnt && cnt.textContent)||0);
+    /* optimistic in-place update — poora feed reload nahi */
+    if(liked){ myLikes.delete(id); actEl.classList.remove("liked"); if(ico) ico.textContent="🤍"; if(cnt) cnt.textContent=Math.max(0,cur-1); }
+    else { myLikes.add(id); actEl.classList.add("liked"); if(ico) ico.textContent="❤️"; if(cnt) cnt.textContent=cur+1; }
+    const p=posts.find(x=>x.id===id);
+    if(p) p.likes=[{count: Math.max(0, cur+(liked?-1:1))}];
     dinfo("post_like_result", { post_id:id, outcome: liked?"unliked":"liked" });
-    if(liked){
-      myLikes.delete(id);
-      await sb.from("likes").delete().eq("post_id",id).eq("user_id",user.id);
-    } else {
-      myLikes.add(id);
-      await sb.from("likes").insert({ post_id:id, user_id:user.id });
+    const res = liked
+      ? await sb.from("likes").delete().eq("post_id",id).eq("user_id",user.id)
+      : await sb.from("likes").insert({ post_id:id, user_id:user.id });
+    if(res.error){
+      /* revert */
+      if(liked){ myLikes.add(id); actEl.classList.add("liked"); if(ico) ico.textContent="❤️"; if(cnt) cnt.textContent=cur; }
+      else { myLikes.delete(id); actEl.classList.remove("liked"); if(ico) ico.textContent="🤍"; if(cnt) cnt.textContent=cur; }
+      toast(friendlyError(res.error, "Like nahi hua"));
     }
-    await loadFeed();
     return;
   }
   if(act==="toggle-comments"){
@@ -1488,11 +1545,17 @@ document.addEventListener("click", async (e)=>{
     const input=document.querySelector(`[data-cinput="${id}"]`);
     const text=(input.value||"").trim(); if(!text) return;
     const { error }=await sb.from("comments").insert({ post_id:id, author:user.id, text });
-    if(error){ diagError("comment_submit_result", error.message, {outcome:"failed"}); return toast(error.message); }
+    if(error){ diagError("comment_submit_result", error.message, {outcome:"failed"}); return toast(friendlyError(error, "Comment nahi gaya")); }
     dinfo("comment_submit_result", { post_id:id, outcome:"success" });
     input.value="";
+    /* count ko in-place theek karo (pehla comment bhi 0 se 1 ho) */
     const p=posts.find(x=>x.id===id);
-    if(p && p.comments && p.comments[0]) p.comments[0].count++;
+    if(p){
+      if(!Array.isArray(p.comments)||!p.comments.length) p.comments=[{count:0}];
+      p.comments[0].count=(p.comments[0].count||0)+1;
+    }
+    const cbtn=document.querySelector(`[data-act="toggle-comments"][data-id="${id}"] .ccount`);
+    if(cbtn && p) cbtn.textContent=p.comments[0].count;
     const box=document.querySelector(`[data-comments="${id}"]`);
     if(box){ box.classList.add("open"); }
     loadComments(id);
@@ -1515,7 +1578,7 @@ document.addEventListener("click", async (e)=>{
       if(paths.length){ try{ await sb.storage.from("media").remove(paths); }catch(e){} }
     }
     const { error }=await sb.from("posts").delete().eq("id",id);
-    if(error) return toast(error.message);
+    if(error) return toast(friendlyError(error, "Delete nahi hua"));
     toast("Post delete ho gaya"); await loadFeed();
     return;
   }
