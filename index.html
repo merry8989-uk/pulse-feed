@@ -135,6 +135,13 @@
   .preview .pdfthumb canvas{max-width:110px;border-radius:8px;display:block}
   .reader-nav{display:flex;gap:10px;padding:12px 14px;border-top:1px solid var(--border)}
   .reader-nav .btn{flex:1;justify-content:center;display:flex}
+  /* feed skeleton */
+  .skel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:14px 0}
+  .skel .srow{display:flex;gap:11px;align-items:center;margin-bottom:12px}
+  .skel .sav{width:36px;height:36px;border-radius:50%;background:#242935;flex:0 0 auto}
+  .skel .ln{height:12px;border-radius:6px;background:linear-gradient(90deg,#20242e 25%,#2c3242 37%,#20242e 63%);background-size:400% 100%;animation:shimmer 1.2s ease-in-out infinite}
+  .skel .ln+.ln{margin-top:9px}
+  @keyframes shimmer{0%{background-position:100% 0}100%{background-position:0 0}}
   /* settings + diagnostics */
   .setrow{display:flex;gap:14px;align-items:center;justify-content:space-between;margin-top:12px}
   .switch{width:56px;height:32px;border-radius:20px;border:1px solid var(--border);background:var(--bg2);position:relative;flex:0 0 auto;transition:.15s;padding:0}
@@ -749,6 +756,7 @@ let posts = [];         // feed
 let myLikes = new Set();
 let feedLimit = 60;     // pagination
 let _lastFeedAt = 0;    // staleness check
+let feedLoading = true; // feed skeleton
 const mediaURLCache = {};
 
 /* ============================================================
@@ -918,10 +926,12 @@ async function fetchPosts(opts={}){
 
 async function loadFeed(){
   if(!CONFIGURED) return;
+  feedLoading=true;
   await loadMyLikes();
   const { data, error } = await fetchPosts({ limit: feedLimit });
-  if(error){ console.error(error); diagError("feed_load_result", error.message, {outcome:"failed"}); toast(friendlyError(error, "Feed load nahi hua")); return; }
+  if(error){ feedLoading=false; console.error(error); diagError("feed_load_result", error.message, {outcome:"failed"}); toast(friendlyError(error, "Feed load nahi hua")); render(); return; }
   posts=data||[];
+  feedLoading=false;
   _lastFeedAt=Date.now();
   dinfo("feed_load_result", { outcome:"success", item_count:posts.length });
   markTTFV("feed_loaded");
@@ -1072,6 +1082,8 @@ function viewFeed(){
   if(posts.length){
     html += posts.map(p=>postHTML(p)).join("");
     if(posts.length>=feedLimit) html += `<div style="text-align:center;margin:14px 0"><button class="btn" data-act="load-more">Load more</button></div>`;
+  } else if(feedLoading){
+    html += skeletonCards();
   } else {
     html += `<div class="empty"><div class="big">🌱</div>Abhi koi post nahi. Pehla post tum karo!</div>`;
   }
@@ -1162,6 +1174,14 @@ function mediaHTML(p){
     <div class="counter"><span class="cur">1</span>/${imgs.length}</div>
     <div class="dots">${imgs.map((_,i)=>`<span class="dot ${i===0?"on":""}"></span>`).join("")}</div>
   </div>`;
+}
+
+function skeletonCards(n=3){
+  let s="";
+  for(let i=0;i<n;i++){
+    s+=`<div class="skel"><div class="srow"><div class="sav"></div><div style="flex:1"><div class="ln" style="width:38%"></div></div></div><div class="ln" style="width:92%"></div><div class="ln" style="width:68%"></div></div>`;
+  }
+  return s;
 }
 
 function postHTML(p){
@@ -1625,7 +1645,7 @@ document.getElementById("edSave").onclick=async ()=>{
   if(user) await ensureProfile();
   if(user) await setUserHash(user.id);
   render();
-  if(user) loadFeed();
+  loadFeed();          /* logged-out visitors ko bhi public feed dikhna chahiye */
   capturePermissions();
   sb.auth.onAuthStateChange(async (event, s)=>{
     dinfo("auth_state_change", { outcome:"event", auth_event:event });
