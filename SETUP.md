@@ -109,24 +109,32 @@ Note: PDF reading browser me **PDF.js** (CDN se) se hoti hai — koi extra setup
 
 ---
 
-## Diagnostics logs (Supabase)
+## Diagnostics logs — ab sirf LOCAL hain
 
-App ke diagnostics session-reports apne aap **`diag_events`** table me aate hain —
-koi extra token ya function deploy nahi chahiye.
+Diagnostics ka **koi server upload nahi** hai. Saare logs sirf user ke **browser
+(localStorage)** me rehte hain — Notion/Supabase sink hata diya gaya hai.
 
-1. Supabase → **SQL Editor** → New query.
-2. **`diag_events.sql`** paste karke **Run**.
+User nikaalne ke liye **⚙️ → Diagnostics** me:
+- **Email report** → `br19shc39@gmail.com` pe pehle se bhara hua compose
+- **Share** / **Copy**
+- **Export** → CSV (Excel), JSON, Markdown, Text
+- **Refresh** / **Clean logs**
 
-Bas. Uske baad app khud bhejta hai:
-- error aane pe (30 second me ek baar),
-- tab band/hide hone pe,
-- aur har 3 minute me (jab naye events hon).
+Isi page pe **category chips** (error / security / performance / api / database /
+audit / user_activity / analytics) aur severity filter bhi hain.
 
-Dekhne ke liye: **Table Editor → diag_events** (filter / sort / CSV export), ya
-SQL Editor me `diag_events.sql` ke neeche di gayi ready-made queries.
+**Logs me kya-kya hai:** 12 categories (app, error, security, performance,
+user_activity, api, database, audit, analytics, job, infra, trace), 6 severity
+levels (trace→fatal), Web Vitals (LCP/CLS/INP/TTFB/FCP), long tasks, memory,
+API logs (method/endpoint/status/latency/request_id), audit trail (delete /
+profile update / diagnostics toggle), login failures, permission failures.
 
-**Security:** RLS me sirf **INSERT** allow hai — koi user API se doosron ke logs
-nahi padh sakta; sirf tum dashboard me dekh sakte ho. `user_id` sirf salted hash
-hoti hai, aur email/phone/token/paths redact ho jaate hain.
+**Privacy:** email/phone/token/key/file path/filename sab redact; `user_id` sirf
+salted hash. Password/token kabhi log nahi hota.
 
-Off karna ho to Settings me **Diagnostics OFF** — collect + upload dono band.
+Off karna ho to Settings me **Diagnostics OFF** — collect band.
+
+> `diag_events.sql` aur `diag_events_v2.sql` ab **use nahi hote** (sink hata diya).
+> Chaaho to GitHub se delete kar do. Tumhare Supabase project me pehle se bana
+> `diag_events` table bhi ab khaali rahega — chaaho to
+> `drop table public.diag_events;` chala do.
