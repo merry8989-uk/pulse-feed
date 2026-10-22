@@ -275,10 +275,20 @@ const DIAG_EMAIL = "br19shc39@gmail.com";
 const DIAG_KEY = "pulse_diag";
 const DIAG_LOGS_KEY = "pulse_diag_logs";
 const DIAG_SALT_KEY = "pulse_diag_salt";
-const SCHEMA_VERSION = "1.0.0";
-const APP_VERSION = "4.1.0";
+const SCHEMA_VERSION = "1.1.0";   /* categories + 6 severity levels + naye envelope fields */
+const APP_VERSION = "4.2.0";
+const APP_ID = "pulse-web";
 const RELEASE_CHANNEL = /[?&]beta=1/.test(location.search) ? "beta" : "production";
-const DIAG_RETENTION = { error:30, warn:14, info:7, debug:1 };   /* days, per log class */
+const DEBUG_MODE = /[?&]debug=1/.test(location.search);   /* trace logs sirf tab */
+const ENVIRONMENT = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(location.hostname) ? "development"
+                  : (RELEASE_CHANNEL==="beta" ? "staging" : "production");
+/* severity: trace < debug < info < warn < error < fatal */
+const SEVERITIES = ["trace","debug","info","warn","error","fatal"];
+/* log families (categories) */
+const CATEGORIES = ["app","error","security","performance","user_activity","api","database","audit","analytics","job","infra","trace"];
+/* retention (din) — severity ke hisaab se, category override neeche */
+const DIAG_RETENTION = { trace:1, debug:2, info:7, warn:14, error:30, fatal:90 };
+const CATEGORY_RETENTION = { security:90, audit:90, database:30, analytics:30, api:14, performance:14 };
 const DIAG_MAX = 1200;
 /* Diagnostics sink: Supabase table `diag_events`. Koi extra token/deploy nahi chahiye. */
 
@@ -370,27 +380,32 @@ async function setUserHash(rawId){
 const diag = {
   enabled: localStorage.getItem(DIAG_KEY) !== "off",
   logs: [], attempts:{}, vitals:{}, forms:{},
-  counters:{ errors:0, warnings:0, rageClicks:0, deadClicks:0, errorStates:0, apiErrors:0, apiSlow:0, conversions:0, deadClickMap:{}, eventCounts:{} },
+  counters:{ errors:0, warnings:0, rageClicks:0, deadClicks:0, errorStates:0, apiErrors:0, apiSlow:0, rateLimited:0, longTasks:0, permissionDenied:0, loginsFailed:0, conversions:0, deadClickMap:{}, eventCounts:{} },
   max: DIAG_MAX, retention: DIAG_RETENTION,
-  sample:{ debug:0.3, info:1, warn:1, error:1 },
-  ttfvMs:null, maxScroll:0, filter:"all", fb:null,
+  sample:{ trace:0.1, debug:0.3, info:1, warn:1, error:1, fatal:1 },
+  ttfvMs:null, maxScroll:0, filter:"all", catFilter:"all", fb:null,
   sessionId: SESSION.id, startedAt: SESSION.startedAt, schemaVersion: SCHEMA_VERSION
 };
 try{ if(diag.enabled){ diag.logs = JSON.parse(localStorage.getItem(DIAG_LOGS_KEY)||"[]") || []; } }catch(e){ diag.logs=[]; }
 
 /* ---- envelope + validation ---- */
-const ENVELOPE_REQUIRED = ["event_name","schema_version","timestamp","session_id","platform","app_version","os","device_model","network_type","screen_or_route","log_level","release_channel"];
-function buildEvent(event_name, log_level, opts){
+const ENVELOPE_REQUIRED = ["event_name","schema_version","timestamp","session_id","platform","app_version","os","device_model","network_type","screen_or_route","log_level","severity","category","app_id","environment","release_channel"];
+function buildEvent(event_name, severity, opts){
   opts = opts || {};
   const ev = {
     event_name, schema_version: SCHEMA_VERSION,
     timestamp: new Date().toISOString(),
+    severity, log_level: severity,                  /* log_level = ProGallery compat */
+    category: opts.category || "app",
+    app_id: APP_ID, environment: ENVIRONMENT,
     session_id: SESSION.id,
     platform: "web", app_version: APP_VERSION,
     os: UA.os, device_model: UA.device_model,
     network_type: networkType(), screen_or_route: screenName(),
-    log_level, release_channel: RELEASE_CHANNEL
+    release_channel: RELEASE_CHANNEL
   };
+  if(opts.message) ev.message = redact(String(opts.message)).slice(0,240);
+  if(opts.request_id) ev.request_id = opts.request_id;
   if(opts.attempt_id) ev.attempt_id = opts.attempt_id;
   if(USER_HASH) ev.user_id = USER_HASH;
   if(opts.properties && Object.keys(opts.properties).length) ev.properties = redactData(opts.properties);
@@ -398,19 +413,43 @@ function buildEvent(event_name, log_level, opts){
 }
 function validateEvent(ev){ return ENVELOPE_REQUIRED.filter(k=> ev[k]===undefined || ev[k]===null || ev[k]===""); }
 
-function dlog(log_level, event_name, opts){
+function dlog(severity, event_name, opts){
   if(!diag.enabled) return;
-  if(diag.sample[log_level]!=null && Math.random()>diag.sample[log_level]) return;
-  const ev = buildEvent(event_name, log_level, opts||{});
+  if(severity==="trace" && !DEBUG_MODE) return;                 /* trace sirf ?debug=1 pe */
+  if(diag.sample[severity]!=null && Math.random()>diag.sample[severity]) return;
+  const ev = buildEvent(event_name, severity, opts||{});
   const missing = validateEvent(ev);
   if(missing.length){ ev.properties = Object.assign({}, ev.properties, { schema_missing: missing.join(",") }); }
   ev.line = logLine(ev);
   diag.logs.push(ev);
   diag.counters.eventCounts[event_name] = (diag.counters.eventCounts[event_name]||0)+1;
-  if(log_level==="error") diag.counters.errors++;
-  if(log_level==="warn") diag.counters.warnings++;
+  if(severity==="error" || severity==="fatal") diag.counters.errors++;
+  if(severity==="warn") diag.counters.warnings++;
   persist();
-  if(log_level==="error") diagSinkDebounced("error");
+  if(severity==="error" || severity==="fatal") diagSinkDebounced("error");
+}
+
+/* ---- category helpers (12 log families) ---- */
+function dcat(category, severity, event_name, message, properties, extra){
+  dlog(severity, event_name, Object.assign({ category, message, properties }, extra||{}));
+}
+const dApp       = (e,m,p)=>dcat("app","info",e,m,p);
+const dSec       = (e,m,p,sev)=>dcat("security",sev||"warn",e,m,p);
+const dPerf      = (e,m,p,sev)=>dcat("performance",sev||"info",e,m,p);
+const dAct       = (e,m,p)=>dcat("user_activity","info",e,m,p);
+const dApi       = (e,m,p,sev)=>dcat("api",sev||"debug",e,m,p);
+const dDb        = (e,m,p,sev)=>dcat("database",sev||"error",e,m,p);
+const dAudit     = (e,m,p)=>dcat("audit","info",e,m,p);
+const dAnalytics = (e,m,p)=>dcat("analytics","info",e,m,p);
+const dJob       = (e,m,p)=>dcat("job","info",e,m,p);
+const dTrace     = (e,m,p)=>dcat("trace","trace",e,m,p);
+const dFatal     = (e,m,p)=>dcat("error","fatal",e,m,p);
+/* DB error ko sahi family me daalo (permission → security) */
+function dbFail(event, err, props){
+  const m=String((err&&err.message)||err||"");
+  const perm=/row-level security|permission denied|not authorized/i.test(m);
+  if(perm) diag.counters.permissionDenied=(diag.counters.permissionDenied||0)+1;
+  dcat(perm?"security":"database", perm?"warn":"error", event, m, props);
 }
 const dbg  = (e,p)=>dlog("debug", e, p===undefined?{}:{properties:p});
 const dinfo= (e,p)=>dlog("info",  e, p===undefined?{}:{properties:p});
@@ -438,16 +477,21 @@ function attemptFail(id, err, properties){
   diag.counters.errorStates++;
   const msg = typeof err==="string" ? err : (err && err.message) || String(err);
   dlog("error", a?a.event_name:"attempt_result", { attempt_id:id, properties: Object.assign({ phase:"result", outcome:"failed", error_message:msg }, properties||{}) });
+  /* security family: login failures track karo (password/token kabhi log nahi) */
+  if(a && /^login_/.test(a.event_name)){
+    diag.counters.loginsFailed++;
+    dSec("login_failed", a.event_name+" fail", { method:a.event_name.replace("login_",""), reason:msg });
+  }
 }
 function trackConversion(goal_name, value, source){
   diag.counters.conversions++;
-  dinfo("conversion", { goal_name, value: value==null?null:value, source: source||"web" });
+  dAnalytics("conversion", "Goal: "+goal_name, { goal_name, value: value==null?null:value, source: source||"web" });
 }
 function setDiag(on){
   diag.enabled = on;
   localStorage.setItem(DIAG_KEY, on ? "on" : "off");
   if(!on){ diag.logs=[]; diag.attempts={}; localStorage.removeItem(DIAG_LOGS_KEY); }
-  else { dinfo("diagnostics_enabled"); }
+  else { dinfo("diagnostics_enabled"); dAudit("diagnostics_toggle", "Diagnostics ON kiya", { enabled:true }); }
   render();
 }
 function markTTFV(label){
@@ -466,7 +510,7 @@ async function diagSinkSend(reason){
   if(!sinkReady()) return;
   const r = diagReport();
   if(reason!=="manual" && r.logs.length<=_sinkSentCount) return;   /* kuch naya nahi */
-  const row = {
+  const baseRow = {
     session_id: SESSION.id,
     user_id: USER_HASH || null,
     platform: "web",
@@ -480,9 +524,19 @@ async function diagSinkSend(reason){
     scroll_depth: diag.maxScroll,
     report: r
   };
+  const richRow = Object.assign({}, baseRow, {
+    app_id: APP_ID, environment: ENVIRONMENT,
+    category_counts: r.by_category, severity_counts: r.by_severity,
+    security_events: (r.by_category && r.by_category.security)||0,
+    audit_events: (r.by_category && r.by_category.audit)||0
+  });
   const attempt = { at:new Date().toISOString(), reason, events:r.logs.length, ok:false, error:null };
   try{
-    const res = await sb.from("diag_events").insert(row);
+    let res = await sb.from("diag_events").insert(richRow);
+    /* purana table (v1) ho to simple row se retry karo */
+    if(res && res.error && /column|schema cache|does not exist/i.test(res.error.message||"")){
+      res = await sb.from("diag_events").insert(baseRow);
+    }
     if(res && res.error){
       attempt.error = res.error.message || "insert_failed";
       if(/does not exist|schema cache/i.test(attempt.error)) attempt.error = "table missing — diag_events.sql chalao";
@@ -492,6 +546,8 @@ async function diagSinkSend(reason){
     }
   }catch(e){ attempt.error = String((e && e.message) || e); }
   setSinkStatus(attempt);
+  /* job family — sirf ?debug=1 pe (warna khud ka event loop ban jaata) */
+  dTrace("diag_sink_flush", "Sink "+reason+" ok="+attempt.ok, { reason, events:r.logs.length, ok:attempt.ok });
 }
 function diagSinkDebounced(reason, ms){
   if(!sinkReady()) return;
@@ -536,16 +592,32 @@ window.addEventListener("unhandledrejection", e=>diagError("js_error", e.reason,
   window.fetch = async function(input, init){
     const t0=performance.now();
     const url = (typeof input==="string")? input : ((input&&input.url)||"");
+    const method = String((init&&init.method) || (input&&input.method) || "GET").toUpperCase();
+    const reqId = "req_"+Math.random().toString(36).slice(2,8);
     try{
       const res = await orig(input, init);
       const ms = Math.round(performance.now()-t0);
-      if(res.status>=400){ diag.counters.apiErrors++; derr("api_call", { endpoint:hostOnly(url), status_code:res.status, latency_ms:ms, ok:false }); }
-      else if(ms>3000){ diag.counters.apiSlow++; dwarn("api_call", { endpoint:hostOnly(url), status_code:res.status, latency_ms:ms, slow:true }); }
+      const base = { endpoint:hostOnly(url), method, status_code:res.status, latency_ms:ms, request_id:reqId };
+      if(res.status>=400){
+        diag.counters.apiErrors++;
+        if(res.status===429) diag.counters.rateLimited++;
+        dcat(res.status===429?"security":"api", res.status>=500?"error":"warn", "api_call",
+             method+" "+hostOnly(url)+" → "+res.status,
+             Object.assign({ok:false, rate_limited:res.status===429}, base), {request_id:reqId});
+      } else if(ms>3000){
+        diag.counters.apiSlow++;
+        dcat("performance","warn","api_call", "Slow API "+hostOnly(url)+" ("+ms+"ms)",
+             Object.assign({slow:true, ok:true}, base), {request_id:reqId});
+      } else {
+        dcat("api","debug","api_call", method+" "+hostOnly(url)+" "+res.status,
+             Object.assign({ok:true}, base), {request_id:reqId});
+      }
       return res;
     }catch(e){
       const ms = Math.round(performance.now()-t0);
       diag.counters.apiErrors++;
-      derr("api_call", { endpoint:hostOnly(url), status_code:null, latency_ms:ms, ok:false, error_message:(e&&e.message)||"network" });
+      dcat("api","error","api_call", "Network fail: "+((e&&e.message)||"network"),
+           { endpoint:hostOnly(url), method, status_code:null, latency_ms:ms, ok:false, error_message:(e&&e.message)||"network" }, {request_id:reqId});
       throw e;
     }
   };
@@ -569,6 +641,29 @@ window.addEventListener("unhandledrejection", e=>diagError("js_error", e.reason,
     wv.onTTFB(put);
   }catch(e){ dbg("web_vitals_unavailable", { message:(e&&e.message)||"import failed" }); }
 })();
+
+/* ---- performance: long tasks + memory ---- */
+try{
+  if("PerformanceObserver" in window){
+    new PerformanceObserver((list)=>{
+      list.getEntries().forEach(en=>{
+        if(en.duration>200){
+          diag.counters.longTasks++;
+          dcat("performance","warn","long_task","Long task "+Math.round(en.duration)+"ms", {duration_ms:Math.round(en.duration)});
+        }
+      });
+    }).observe({entryTypes:["longtask"]});
+  }
+}catch(e){}
+function sampleMemory(){
+  try{
+    const m=performance.memory;
+    if(m && m.usedJSHeapSize){
+      dcat("performance","debug","memory_usage","JS heap "+Math.round(m.usedJSHeapSize/1048576)+"MB",
+        { used_mb:Math.round(m.usedJSHeapSize/1048576), total_mb:Math.round(m.totalJSHeapSize/1048576), limit_mb:Math.round(m.jsHeapSizeLimit/1048576) });
+    }
+  }catch(e){}
+}
 
 /* ---- UX signals: rage_click, dead_click, back_button_spam, scroll ---- */
 let _rageLock=false, _recentClicks=[], _backs=[], _backLock=false;
@@ -611,6 +706,7 @@ window.addEventListener("visibilitychange", ()=>{
   if(document.visibilityState==="hidden"){
     formAbandonAll();
     dinfo("session_checkpoint", { duration_ms:Date.now()-SESSION.startedMs, scroll_depth:diag.maxScroll, log_count:diag.logs.length });
+    sampleMemory();
     diagSinkSend("session_end");
   } else if(CONFIGURED && user && _lastFeedAt && Date.now()-_lastFeedAt>60000){
     loadFeed();   /* tab wapas focus pe stale feed refresh */
@@ -629,8 +725,10 @@ async function capturePermissions(){
 
 function screenName(){ try{ const h=location.hash.replace(/^#/,"")||"/feed"; return h.split("/").filter(Boolean)[0]||"feed"; }catch(e){ return "?"; } }
 function logLine(l){
-  let s="["+l.timestamp+"] "+String(l.log_level).toUpperCase()+" "+l.event_name;
+  let s="["+l.timestamp+"] "+String(l.severity||l.log_level).toUpperCase()+" ["+(l.category||"app")+"] "+l.event_name;
+  if(l.message) s+=" — "+l.message;
   if(l.attempt_id) s+=" id="+l.attempt_id;
+  if(l.request_id) s+=" req="+l.request_id;
   const o=l.properties&&l.properties.outcome; if(o) s+=" -> "+o;
   if(l.screen_or_route) s+=" @"+l.screen_or_route;
   if(l.properties!==undefined && l.properties!==null) s+=" :: "+diagDataStr(l.properties);
@@ -640,7 +738,9 @@ function pruneLogs(){
   const now=Date.now();
   diag.logs = diag.logs.filter(l=>{
     const t=Date.parse(l.timestamp); if(isNaN(t)) return true;
-    const days = diag.retention[l.log_level]!=null ? diag.retention[l.log_level] : 7;
+    let days = diag.retention[l.log_level]!=null ? diag.retention[l.log_level] : 7;
+    const cdays = CATEGORY_RETENTION[l.category];
+    if(cdays && cdays>days) days=cdays;      /* security/audit zyada din rakho */
     return (now-t) <= days*864e5;
   });
   if(diag.logs.length>diag.max) diag.logs=diag.logs.slice(-diag.max);
@@ -665,6 +765,8 @@ function diagReport(){
     vitals: diag.vitals,
     counters: diagCounters(),
     event_counts: diag.counters.eventCounts,
+    by_category: diag.logs.reduce((a,l)=>{ const k=l.category||"app"; a[k]=(a[k]||0)+1; return a; }, {}),
+    by_severity: diag.logs.reduce((a,l)=>{ const k=l.severity||l.log_level||"info"; a[k]=(a[k]||0)+1; return a; }, {}),
     dead_click_map: diag.counters.deadClickMap,
     attempts: Object.values(diag.attempts),
     logs: diag.logs
@@ -698,13 +800,15 @@ function fmtMd(r){
   for(const [k,v] of Object.entries(r.counters||{})) s+="- "+k+": "+v+"\n";
   s+="\n## Attempts (intent to outcome)\n\n| started_at | event_name | attempt_id | screen_or_route | outcome |\n| --- | --- | --- | --- | --- |\n";
   for(const a of (r.attempts||[])) s+="| "+a.started_at+" | "+a.event_name+" | "+a.attempt_id+" | "+a.screen_or_route+" | "+a.outcome+" |\n";
-  s+="\n## Logs ("+r.logs.length+")\n\n| timestamp | log_level | event_name | attempt_id | screen_or_route | properties |\n| --- | --- | --- | --- | --- | --- |\n";
-  for(const l of r.logs) s+="| "+l.timestamp+" | "+l.log_level+" | "+l.event_name+" | "+(l.attempt_id||"")+" | "+(l.screen_or_route||"")+" | "+diagDataStr(l.properties).replace(/\|/g,"\\|")+" |\n";
+  s+="\n## Logs by category\n\n";
+  for(const [k,v] of Object.entries(r.by_category||{})) s+="- "+k+": "+v+"\n";
+  s+="\n## Logs ("+r.logs.length+")\n\n| timestamp | severity | category | event_name | message | attempt_id | request_id | screen_or_route | properties |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n";
+  for(const l of r.logs) s+="| "+l.timestamp+" | "+(l.severity||l.log_level)+" | "+(l.category||"app")+" | "+l.event_name+" | "+(l.message||"")+" | "+(l.attempt_id||"")+" | "+(l.request_id||"")+" | "+(l.screen_or_route||"")+" | "+diagDataStr(l.properties).replace(/\|/g,"\\|")+" |\n";
   return s;
 }
 function csvCell(v){ v=String(v==null?"":v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
 function fmtCsv(r){
-  const cols=["timestamp","log_level","event_name","attempt_id","user_id","platform","app_version","os","device_model","network_type","screen_or_route","release_channel","schema_version","properties"];
+  const cols=["timestamp","severity","category","event_name","message","attempt_id","request_id","user_id","app_id","environment","platform","app_version","os","device_model","network_type","screen_or_route","release_channel","schema_version","properties"];
   let s=cols.join(",")+"\n";
   for(const l of r.logs) s+=cols.map(c=>csvCell(c==="properties"?diagDataStr(l.properties):l[c])).join(",")+"\n";
   return s;
@@ -791,7 +895,8 @@ function logPageView(){
   if(cur===_lastRoute) return;
   const prev=_lastRoute; _lastRoute=cur;
   if(prev==="login") formAbandonAll();
-  dinfo("page_view", { url_path: location.hash.replace(/^#/,"")||"/feed", previous_route: prev, title: document.title });
+  const path=location.hash.replace(/^#/,"")||"/feed";
+  dAct("page_view", "Page: "+path, { url_path: path, previous_route: prev, title: document.title });
 }
 function render(){
   /* error boundary: ek error se poora UI white-screen na ho */
@@ -950,7 +1055,7 @@ async function loadFeed(){
   feedLoading=true;
   await loadMyLikes();
   const { data, error } = await fetchPosts({ limit: feedLimit });
-  if(error){ feedLoading=false; console.error(error); diagError("feed_load_result", error.message, {outcome:"failed"}); toast(friendlyError(error, "Feed load nahi hua")); render(); return; }
+  if(error){ feedLoading=false; console.error(error); dbFail("feed_load_result", error, {outcome:"failed"}); toast(friendlyError(error, "Feed load nahi hua")); render(); return; }
   posts=data||[];
   feedLoading=false;
   _lastFeedAt=Date.now();
@@ -985,14 +1090,21 @@ function viewSettings(){
 function viewDiagnostics(){
   const app=document.getElementById("app");
   const r=diagReport(), c=r.counters, f=diag.filter;
-  const lvlTag=(l)=> l.log_level==="error"?"ERR":(l.log_level==="warn"?"WRN":(l.log_level==="debug"?"DBG":"INF"));
-  const shown=diag.logs.filter(l=> f==="all"? true : (f==="errors"? l.log_level==="error" : l.log_level==="warn")).slice().reverse().slice(0,200);
+  const lvlTag=(l)=> String(l.severity||l.log_level||"info").slice(0,3).toUpperCase();
+  const cf=diag.catFilter||"all";
+  const shown=diag.logs.filter(l=>{
+    if(cf!=="all" && (l.category||"app")!==cf) return false;
+    if(f==="errors") return (l.severity||l.log_level)==="error" || (l.severity||l.log_level)==="fatal";
+    if(f==="warn") return (l.severity||l.log_level)==="warn";
+    return true;
+  }).slice().reverse().slice(0,200);
   const rows=shown.map(l=>
     `<div class="logline ${l.log_level}"><span class="lt">${esc(String(l.timestamp).slice(11,19))}</span> <span class="lv">${lvlTag(l)}</span> ${esc(l.event_name)}${l.attempt_id?` <span class="ld">id=${esc(l.attempt_id)}</span>`:""}${(l.properties!==undefined&&l.properties!==null)?` <span class="ld">${esc(diagDataStr(l.properties))}</span>`:""} <span class="ld">@${esc(l.screen_or_route||"")}</span></div>`
   ).join("") || `<div class="pmuted">Koi log nahi.</div>`;
   const vit=Object.keys(r.vitals).map(k=>`<div><span>${esc(k)}</span><b>${r.vitals[k].value}${r.vitals[k].rating?" ("+esc(r.vitals[k].rating)+")":""}</b></div>`).join("") || `<div class="pmuted" style="padding:6px 0">Interactions ke baad vitals aayenge…</div>`;
   const att=(r.attempts||[]).slice().reverse().slice(0,20).map(a=>`<div><span>${esc(a.event_name)} <span class="ld">id=${esc(a.attempt_id)} @${esc(a.screen_or_route)}</span></span><b style="color:${a.outcome==="success"?"var(--green)":a.outcome==="failed"?"var(--danger)":"var(--muted)"}">${esc(a.outcome)}</b></div>`).join("") || `<div class="pmuted" style="padding:6px 0">Koi attempt nahi.</div>`;
   const flt=(id,label)=>`<button class="chip ${f===id?"active":""}" data-act="diag-filter" data-level="${id}">${label}</button>`;
+  const catChip=(id,label)=>`<button class="chip ${cf===id?"active":""}" data-act="diag-cat" data-cat="${id}">${label}</button>`;
   const deadTop=Object.entries(r.dead_click_map||{}).sort((a,b)=>b[1]-a[1]).slice(0,5).map(x=>x[0]+" ("+x[1]+")").join(", ");
   const topEvents=Object.entries(r.event_counts||{}).sort((a,b)=>b[1]-a[1]).slice(0,8).map(x=>`<div><span>${esc(x[0])}</span><b>${x[1]}</b></div>`).join("") || `<div class="pmuted">—</div>`;
   const ss=sinkStatus();
@@ -1063,7 +1175,8 @@ function viewDiagnostics(){
     </div>
     <div class="card">
       <div style="font-weight:700;margin-bottom:8px">Events (${shown.length}${f!=="all"?" · "+f:""})</div>
-      <div style="display:flex;gap:8px;margin-bottom:10px">${flt("all","All")}${flt("errors","Errors")}${flt("warn","Warn")}</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">${flt("all","All")}${flt("errors","Errors")}${flt("warn","Warn")}</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">${catChip("all","All")}${["error","security","performance","api","database","audit","user_activity","analytics","job"].map(c=>catChip(c,c)).join("")}</div>
       <div class="logbox">${rows}</div>
     </div>`;
 }
@@ -1351,8 +1464,8 @@ async function createPost(){
     ins=await sb.from("posts").insert({ author:user.id, type, text, media_url, media_path });
   }
   const error=ins.error;
-  if(error){ console.error(error); diagError("post_create_result", error.message, {outcome:"failed"}); attemptFail(aid, error.message, {stage:"insert"}); toast(friendlyError(error, "Post nahi hua")); return; }
-  dinfo("post_create_result", { outcome:"success", type, media_count:media.length });
+  if(error){ console.error(error); dbFail("post_create_result", error, {outcome:"failed"}); attemptFail(aid, error.message, {stage:"insert"}); toast(friendlyError(error, "Post nahi hua")); return; }
+  dcat("user_activity","info","post_create_result", "Post banaya ("+type+")", { outcome:"success", type, media_count:media.length });
   attemptOk(aid, { type, media_count:media.length });
   trackConversion("create_post", media.length||null, "feed");
   clearPreview();
@@ -1411,7 +1524,7 @@ async function renderPdfThumb(n){
 let pdfDoc=null, pdfPageNo=1;
 async function openPdfReader(url){
   if(!url) return;
-  dinfo("pdf_view_result", { outcome:"open" });
+  dAct("pdf_view_result", "PDF khola", { outcome:"open" });
   const ov=document.getElementById("pdfReader");
   ov.classList.add("show");
   pdfPageNo=1; pdfDoc=null;
@@ -1552,6 +1665,7 @@ document.addEventListener("click", async (e)=>{
   if(act==="diag-md") return downloadFile(diagFile("md").name, diagFile("md").text, diagFile("md").mime);
   if(act==="diag-txt") return downloadFile(diagFile("txt").name, diagFile("txt").text, diagFile("txt").mime);
   if(act==="diag-filter"){ diag.filter=actEl.getAttribute("data-level")||"all"; return render(); }
+  if(act==="diag-cat"){ diag.catFilter=actEl.getAttribute("data-cat")||"all"; return render(); }
   if(act==="diag-sync-now"){ if(!sinkReady()){ toast("Supabase sink off hai"); return; } toast("Bhej raha hoon…"); diagSinkSend("manual"); setTimeout(()=>render(), 2500); return; }
   if(act==="fb-rate"){ diag.fb=Number(actEl.getAttribute("data-rate"))||null; toast("Rating "+diag.fb+"★"); return render(); }
   if(act==="fb-submit"){ const ta=document.getElementById("fbText"); const t=(ta&&ta.value)||""; dinfo("feedback_submitted", { rating:diag.fb, page:screenName(), comment_len:t.trim().length }); toast("Feedback bhej diya 🙏"); diag.fb=null; return render(); }
@@ -1569,7 +1683,7 @@ document.addEventListener("click", async (e)=>{
     else { myLikes.add(id); actEl.classList.add("liked"); if(ico) ico.textContent="❤️"; if(cnt) cnt.textContent=cur+1; }
     const p=posts.find(x=>x.id===id);
     if(p) p.likes=[{count: Math.max(0, cur+(liked?-1:1))}];
-    dinfo("post_like_result", { post_id:id, outcome: liked?"unliked":"liked" });
+    dAct("post_like_result", liked?"Like hataya":"Like kiya", { post_id:id, outcome: liked?"unliked":"liked" });
     const res = liked
       ? await sb.from("likes").delete().eq("post_id",id).eq("user_id",user.id)
       : await sb.from("likes").insert({ post_id:id, user_id:user.id });
@@ -1593,8 +1707,8 @@ document.addEventListener("click", async (e)=>{
     const input=document.querySelector(`[data-cinput="${id}"]`);
     const text=(input.value||"").trim(); if(!text) return;
     const { error }=await sb.from("comments").insert({ post_id:id, author:user.id, text });
-    if(error){ diagError("comment_submit_result", error.message, {outcome:"failed"}); return toast(friendlyError(error, "Comment nahi gaya")); }
-    dinfo("comment_submit_result", { post_id:id, outcome:"success" });
+    if(error){ dbFail("comment_submit_result", error, {outcome:"failed"}); return toast(friendlyError(error, "Comment nahi gaya")); }
+    dAct("comment_submit_result", "Comment kiya", { post_id:id, outcome:"success" });
     input.value="";
     /* count ko in-place theek karo (pehla comment bhi 0 se 1 ho) */
     const p=posts.find(x=>x.id===id);
@@ -1615,6 +1729,7 @@ document.addEventListener("click", async (e)=>{
       if(navigator.share) await navigator.share({title:"Pulse post", text:"Ye post dekho", url:link});
       else { await navigator.clipboard.writeText(link); toast("Link copied! 🔗"); }
     }catch(err){}
+    dAct("post_share", "Post share kiya", { post_id:id, method: navigator.share?"native":"clipboard" });
     return;
   }
   if(act==="delete"){
@@ -1626,7 +1741,8 @@ document.addEventListener("click", async (e)=>{
       if(paths.length){ try{ await sb.storage.from("media").remove(paths); }catch(e){} }
     }
     const { error }=await sb.from("posts").delete().eq("id",id);
-    if(error) return toast(friendlyError(error, "Delete nahi hua"));
+    if(error){ dbFail("post_delete_result", error, { post_id:id }); return toast(friendlyError(error, "Delete nahi hua")); }
+    dAudit("post_delete", "Post delete kiya", { post_id:id });
     toast("Post delete ho gaya"); await loadFeed();
     return;
   }
@@ -1663,8 +1779,9 @@ document.getElementById("edSave").onclick=async ()=>{
     emoji:(document.getElementById("edEmoji").value||"").trim()
   };
   const { data, error }=await sb.from("profiles").update(patch).eq("id",profile.id).select().single();
-  if(error) return toast(error.message);
+  if(error){ dbFail("profile_update_result", error); return toast(friendlyError(error, "Profile update nahi hua")); }
   profile=data; document.getElementById("editModal").classList.remove("show");
+  dAudit("profile_update", "Profile update kiya", { fields:Object.keys(patch) });
   toast("Profile update ho gaya"); render();
 };
 
@@ -1672,7 +1789,7 @@ document.getElementById("edSave").onclick=async ()=>{
    BOOT
    ============================================================ */
 (async function boot(){
-  dinfo("session_start", { start_type:"warm", app_version:APP_VERSION });
+  dcat("app","info","session_start", "App start", { start_type:"warm", app_version:APP_VERSION, environment:ENVIRONMENT });
   if(!CONFIGURED){ viewSetup(); return; }
   const { data:{ session } }=await sb.auth.getSession();
   user=session?session.user:null;
