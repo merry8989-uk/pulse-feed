@@ -106,3 +106,27 @@ Iske liye database me ek naya column chahiye. **Agar tumne pehle `setup.sql` cha
 (Agar tum abhi shuru kar rahe ho, to naya `setup.sql` already ye column bana deta hai — migration ki zaroorat nahi.)
 
 Note: PDF reading browser me **PDF.js** (CDN se) se hoti hai — koi extra setup nahi chahiye.
+
+---
+
+## Diagnostics logs (Supabase)
+
+App ke diagnostics session-reports apne aap **`diag_events`** table me aate hain —
+koi extra token ya function deploy nahi chahiye.
+
+1. Supabase → **SQL Editor** → New query.
+2. **`diag_events.sql`** paste karke **Run**.
+
+Bas. Uske baad app khud bhejta hai:
+- error aane pe (30 second me ek baar),
+- tab band/hide hone pe,
+- aur har 3 minute me (jab naye events hon).
+
+Dekhne ke liye: **Table Editor → diag_events** (filter / sort / CSV export), ya
+SQL Editor me `diag_events.sql` ke neeche di gayi ready-made queries.
+
+**Security:** RLS me sirf **INSERT** allow hai — koi user API se doosron ke logs
+nahi padh sakta; sirf tum dashboard me dekh sakte ho. `user_id` sirf salted hash
+hoti hai, aur email/phone/token/paths redact ho jaate hain.
+
+Off karna ho to Settings me **Diagnostics OFF** — collect + upload dono band.
