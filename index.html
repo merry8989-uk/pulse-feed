@@ -262,8 +262,7 @@ const APP_VERSION = "4.0.0";
 const RELEASE_CHANNEL = /[?&]beta=1/.test(location.search) ? "beta" : "production";
 const DIAG_RETENTION = { error:30, warn:14, info:7, debug:1 };   /* days, per log class */
 const DIAG_MAX = 1200;
-/* Notion sink (automatic + silent) — Supabase Edge Function. Pehle se set hai; user ko kuch nahi batana. */
-const NOTION_SINK_URL = "https://naimlzavtlytnrqixffm.supabase.co/functions/v1/notion-sink";
+/* Diagnostics sink: Supabase table `diag_events`. Koi extra token/deploy nahi chahiye. */
 
 /* ---- privacy: identical redaction rules everywhere ---- */
 const REDACT_RULES = [
@@ -393,7 +392,7 @@ function dlog(log_level, event_name, opts){
   if(log_level==="error") diag.counters.errors++;
   if(log_level==="warn") diag.counters.warnings++;
   persist();
-  if(log_level==="error") notionSendDebounced("error");
+  if(log_level==="error") diagSinkDebounced("error");
 }
 const dbg  = (e,p)=>dlog("debug", e, p===undefined?{}:{properties:p});
 const dinfo= (e,p)=>dlog("info",  e, p===undefined?{}:{properties:p});
@@ -439,63 +438,54 @@ function markTTFV(label){
   dinfo("time_to_first_value", { ms:diag.ttfvMs, first_action:label });
 }
 
-/* ---- Notion sink: session report → Notion (via secure Edge Function) ---- */
-let _notionLast=0, _notionTimer=null;
-const NOTION_PAGE_KEY = "pulse_notion_page_";
-const NOTION_SENT_KEY = "pulse_notion_sent_";
-const NOTION_STATUS_KEY = "pulse_notion_status";
-function notionReady(){ return diag.enabled && NOTION_SINK_URL && NOTION_SINK_URL.indexOf("http")===0; }
-function notionState(){
-  return {
-    pageId: localStorage.getItem(NOTION_PAGE_KEY+SESSION.id) || null,
-    sent: Number(localStorage.getItem(NOTION_SENT_KEY+SESSION.id)||0) || 0
+/* ---- Diagnostics sink: session report → Supabase `diag_events` ---- */
+let _sinkLast=0, _sinkTimer=null, _sinkSentCount=0;
+const SINK_STATUS_KEY = "pulse_diag_sink_status";
+function sinkReady(){ return diag.enabled && CONFIGURED && !!sb; }
+function sinkStatus(){ try{ return JSON.parse(localStorage.getItem(SINK_STATUS_KEY)||"null"); }catch(e){ return null; } }
+function setSinkStatus(s){ try{ localStorage.setItem(SINK_STATUS_KEY, JSON.stringify(s)); }catch(e){} }
+async function diagSinkSend(reason){
+  if(!sinkReady()) return;
+  const r = diagReport();
+  if(reason!=="manual" && r.logs.length<=_sinkSentCount) return;   /* kuch naya nahi */
+  const row = {
+    session_id: SESSION.id,
+    user_id: USER_HASH || null,
+    platform: "web",
+    app_version: APP_VERSION,
+    schema_version: SCHEMA_VERSION,
+    release_channel: RELEASE_CHANNEL,
+    event_count: r.logs.length,
+    error_count: r.counters.errors,
+    warning_count: r.counters.warnings,
+    ttfv_ms: diag.ttfvMs,
+    scroll_depth: diag.maxScroll,
+    report: r
   };
-}
-function notionStatus(){ try{ return JSON.parse(localStorage.getItem(NOTION_STATUS_KEY)||"null"); }catch(e){ return null; } }
-function setNotionStatus(s){ try{ localStorage.setItem(NOTION_STATUS_KEY, JSON.stringify(s)); }catch(e){} }
-async function notionSend(reason, useKeepalive){
-  if(!notionReady()) return;
-  const st = notionState();
-  const full = diagReport();
-  const newEvents = full.logs.slice(st.sent);
-  if(st.pageId && newEvents.length===0 && reason!=="manual") return;   /* kuch naya nahi */
-  const slim = Object.assign({}, full, { logs: [] });                    /* payload halka rakho */
-  let payload;
-  try{ payload = JSON.stringify({ reason, report: slim, page_id: st.pageId, new_events: newEvents }); }catch(e){ return; }
-  const headers = { "Content-Type":"application/json" };
-  if(CONFIGURED && SUPABASE_ANON_KEY){ headers["Authorization"]="Bearer "+SUPABASE_ANON_KEY; headers["apikey"]=SUPABASE_ANON_KEY; }
-  const attempt = { at:new Date().toISOString(), reason, events:newEvents.length, bytes:payload.length, status:null, ok:false, error:null, response:null };
-  const send = (keep) => fetch(NOTION_SINK_URL, { method:"POST", headers, body:payload, keepalive:!!keep });
-  let res=null;
-  try{ res = await send(useKeepalive); }
-  catch(e1){
-    /* keepalive + bada body browsers me fail hota hai → bina keepalive dobara try */
-    attempt.error = String((e1 && e1.message) || e1);
-    try{ res = await send(false); }catch(e2){ attempt.error = String((e2 && e2.message) || e2); setNotionStatus(attempt); return; }
-  }
+  const attempt = { at:new Date().toISOString(), reason, events:r.logs.length, ok:false, error:null };
   try{
-    attempt.status = res.status;
-    const data = await res.json().catch(()=>null);
-    attempt.response = data ? (data.error || (data.ok ? "ok" : JSON.stringify(data).slice(0,300))) : null;
-    if(res.ok && data && data.ok){
+    const res = await sb.from("diag_events").insert(row);
+    if(res && res.error){
+      attempt.error = res.error.message || "insert_failed";
+      if(/does not exist|schema cache/i.test(attempt.error)) attempt.error = "table missing — diag_events.sql chalao";
+    } else {
       attempt.ok = true;
-      if(data.page_id) localStorage.setItem(NOTION_PAGE_KEY+SESSION.id, data.page_id);
-      localStorage.setItem(NOTION_SENT_KEY+SESSION.id, String(full.logs.length));
+      _sinkSentCount = r.logs.length;
     }
-  }catch(e){ attempt.error = "response_read_failed"; }
-  setNotionStatus(attempt);
+  }catch(e){ attempt.error = String((e && e.message) || e); }
+  setSinkStatus(attempt);
 }
-function notionSendDebounced(reason, ms){
-  if(!notionReady()) return;
+function diagSinkDebounced(reason, ms){
+  if(!sinkReady()) return;
   const now=Date.now();
-  if(now-_notionLast < (ms||30000)) return;
-  _notionLast=now;
-  clearTimeout(_notionTimer);
-  _notionTimer=setTimeout(()=>notionSend(reason), 1500);
+  if(now-_sinkLast < (ms||30000)) return;
+  _sinkLast=now;
+  clearTimeout(_sinkTimer);
+  _sinkTimer=setTimeout(()=>diagSinkSend(reason), 1200);
 }
-/* Automatic + silent — user ko kuch karna nahi hai (koi button/notice nahi). */
-setInterval(()=>{ notionSend("periodic"); }, 120000);
-window.addEventListener("pagehide", ()=>{ notionSend("pagehide", true); });
+/* Automatic + silent — user ko kuch karna nahi hai. */
+setInterval(()=>{ diagSinkSend("periodic"); }, 180000);
+window.addEventListener("pagehide", ()=>{ diagSinkSend("pagehide"); });
 
 /* ---- form lifecycle (form_start / form_submit / form_abandon) ---- */
 function formStart(id, step){
@@ -603,7 +593,7 @@ window.addEventListener("visibilitychange", ()=>{
   if(document.visibilityState==="hidden"){
     formAbandonAll();
     dinfo("session_checkpoint", { duration_ms:Date.now()-SESSION.startedMs, scroll_depth:diag.maxScroll, log_count:diag.logs.length });
-    notionSend("session_end", true);
+    diagSinkSend("session_end");
   }
 });
 window.addEventListener("online", ()=>dinfo("network_state", { network_type:networkType(), online:true }));
@@ -953,7 +943,7 @@ function viewDiagnostics(){
   const flt=(id,label)=>`<button class="chip ${f===id?"active":""}" data-act="diag-filter" data-level="${id}">${label}</button>`;
   const deadTop=Object.entries(r.dead_click_map||{}).sort((a,b)=>b[1]-a[1]).slice(0,5).map(x=>x[0]+" ("+x[1]+")").join(", ");
   const topEvents=Object.entries(r.event_counts||{}).sort((a,b)=>b[1]-a[1]).slice(0,8).map(x=>`<div><span>${esc(x[0])}</span><b>${x[1]}</b></div>`).join("") || `<div class="pmuted">—</div>`;
-  const ns=notionStatus();
+  const ss=sinkStatus();
   app.innerHTML=`
     <button class="back" data-go="#/settings">← Settings</button>
     <div class="card">
@@ -976,14 +966,14 @@ function viewDiagnostics(){
       <div class="note"><b>Email report</b> se ${DIAG_EMAIL} pe compose khulega — events pehle se bhare honge, sirf Send dabana hai. Bade logs ke liye <b>Share</b> ya <b>Export</b> — poori file attach ho jaati hai.</div>
     </div>
     <div class="card">
-      <div style="font-weight:700;margin-bottom:8px">Notion sync</div>
+      <div style="font-weight:700;margin-bottom:8px">Supabase logs</div>
       <div class="kv">
-        <div><span>configured</span><b>${notionReady()?"yes":"no"}</b></div>
-        <div><span>last attempt</span><b>${ns?esc(String(ns.at).slice(11,19)):"—"}</b></div>
-        <div><span>http status</span><b>${ns&&ns.status!=null?ns.status:"—"}</b></div>
-        <div><span>result</span><b style="color:${ns&&ns.ok?"var(--green)":"var(--danger)"}">${ns?(ns.ok?"ok":esc(ns.error||ns.response||"failed")):"—"}</b></div>
+        <div><span>configured</span><b>${sinkReady()?"yes":"no"}</b></div>
+        <div><span>last send</span><b>${ss?esc(String(ss.at).slice(11,19)):"—"}</b></div>
+        <div><span>events sent</span><b>${ss?ss.events:"—"}</b></div>
+        <div><span>result</span><b style="color:${ss&&ss.ok?"var(--green)":"var(--danger)"}">${ss?(ss.ok?"ok":esc(ss.error||"failed")):"—"}</b></div>
       </div>
-      <button class="btn block" style="margin-top:12px" data-act="notion-sync-now">Sync now</button>
+      <button class="btn block" style="margin-top:12px" data-act="diag-sync-now">Sync now</button>
     </div>
     <div class="card">
       <div style="font-weight:700;margin-bottom:8px">Web vitals (RUM)</div>
@@ -1466,7 +1456,7 @@ document.addEventListener("click", async (e)=>{
   if(act==="diag-md") return downloadFile(diagFile("md").name, diagFile("md").text, diagFile("md").mime);
   if(act==="diag-txt") return downloadFile(diagFile("txt").name, diagFile("txt").text, diagFile("txt").mime);
   if(act==="diag-filter"){ diag.filter=actEl.getAttribute("data-level")||"all"; return render(); }
-  if(act==="notion-sync-now"){ if(!notionReady()){ toast("Notion sync off hai"); return; } toast("Sync kar raha hoon…"); notionSend("manual"); setTimeout(()=>render(), 3000); return; }
+  if(act==="diag-sync-now"){ if(!sinkReady()){ toast("Supabase sink off hai"); return; } toast("Bhej raha hoon…"); diagSinkSend("manual"); setTimeout(()=>render(), 2500); return; }
   if(act==="fb-rate"){ diag.fb=Number(actEl.getAttribute("data-rate"))||null; toast("Rating "+diag.fb+"★"); return render(); }
   if(act==="fb-submit"){ const ta=document.getElementById("fbText"); const t=(ta&&ta.value)||""; dinfo("feedback_submitted", { rating:diag.fb, page:screenName(), comment_len:t.trim().length }); toast("Feedback bhej diya 🙏"); diag.fb=null; return render(); }
 
