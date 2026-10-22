@@ -290,7 +290,7 @@ const CATEGORIES = ["app","error","security","performance","user_activity","api"
 const DIAG_RETENTION = { trace:1, debug:2, info:7, warn:14, error:30, fatal:90 };
 const CATEGORY_RETENTION = { security:90, audit:90, database:30, analytics:30, api:14, performance:14 };
 const DIAG_MAX = 1200;
-/* Diagnostics sink: Supabase table `diag_events`. Koi extra token/deploy nahi chahiye. */
+/* Diagnostics ab sirf LOCAL hain (browser me). Koi server upload nahi. */
 
 /* ---- privacy: identical redaction rules everywhere ---- */
 const REDACT_RULES = [
@@ -426,7 +426,6 @@ function dlog(severity, event_name, opts){
   if(severity==="error" || severity==="fatal") diag.counters.errors++;
   if(severity==="warn") diag.counters.warnings++;
   persist();
-  if(severity==="error" || severity==="fatal") diagSinkDebounced("error");
 }
 
 /* ---- category helpers (12 log families) ---- */
@@ -500,66 +499,7 @@ function markTTFV(label){
   dinfo("time_to_first_value", { ms:diag.ttfvMs, first_action:label });
 }
 
-/* ---- Diagnostics sink: session report → Supabase `diag_events` ---- */
-let _sinkLast=0, _sinkTimer=null, _sinkSentCount=0;
-const SINK_STATUS_KEY = "pulse_diag_sink_status";
-function sinkReady(){ return diag.enabled && CONFIGURED && !!sb; }
-function sinkStatus(){ try{ return JSON.parse(localStorage.getItem(SINK_STATUS_KEY)||"null"); }catch(e){ return null; } }
-function setSinkStatus(s){ try{ localStorage.setItem(SINK_STATUS_KEY, JSON.stringify(s)); }catch(e){} }
-async function diagSinkSend(reason){
-  if(!sinkReady()) return;
-  const r = diagReport();
-  if(reason!=="manual" && r.logs.length<=_sinkSentCount) return;   /* kuch naya nahi */
-  const baseRow = {
-    session_id: SESSION.id,
-    user_id: USER_HASH || null,
-    platform: "web",
-    app_version: APP_VERSION,
-    schema_version: SCHEMA_VERSION,
-    release_channel: RELEASE_CHANNEL,
-    event_count: r.logs.length,
-    error_count: r.counters.errors,
-    warning_count: r.counters.warnings,
-    ttfv_ms: diag.ttfvMs,
-    scroll_depth: diag.maxScroll,
-    report: r
-  };
-  const richRow = Object.assign({}, baseRow, {
-    app_id: APP_ID, environment: ENVIRONMENT,
-    category_counts: r.by_category, severity_counts: r.by_severity,
-    security_events: (r.by_category && r.by_category.security)||0,
-    audit_events: (r.by_category && r.by_category.audit)||0
-  });
-  const attempt = { at:new Date().toISOString(), reason, events:r.logs.length, ok:false, error:null };
-  try{
-    let res = await sb.from("diag_events").insert(richRow);
-    /* purana table (v1) ho to simple row se retry karo */
-    if(res && res.error && /column|schema cache|does not exist/i.test(res.error.message||"")){
-      res = await sb.from("diag_events").insert(baseRow);
-    }
-    if(res && res.error){
-      attempt.error = res.error.message || "insert_failed";
-      if(/does not exist|schema cache/i.test(attempt.error)) attempt.error = "table missing — diag_events.sql chalao";
-    } else {
-      attempt.ok = true;
-      _sinkSentCount = r.logs.length;
-    }
-  }catch(e){ attempt.error = String((e && e.message) || e); }
-  setSinkStatus(attempt);
-  /* job family — sirf ?debug=1 pe (warna khud ka event loop ban jaata) */
-  dTrace("diag_sink_flush", "Sink "+reason+" ok="+attempt.ok, { reason, events:r.logs.length, ok:attempt.ok });
-}
-function diagSinkDebounced(reason, ms){
-  if(!sinkReady()) return;
-  const now=Date.now();
-  if(now-_sinkLast < (ms||30000)) return;
-  _sinkLast=now;
-  clearTimeout(_sinkTimer);
-  _sinkTimer=setTimeout(()=>diagSinkSend(reason), 1200);
-}
-/* Automatic + silent — user ko kuch karna nahi hai. */
-setInterval(()=>{ diagSinkSend("periodic"); }, 180000);
-window.addEventListener("pagehide", ()=>{ diagSinkSend("pagehide"); });
+/* ---- (hataya gaya) Supabase sink — diagnostics ab local hi rehte hain ---- */
 
 /* ---- form lifecycle (form_start / form_submit / form_abandon) ---- */
 function formStart(id, step){
@@ -707,7 +647,6 @@ window.addEventListener("visibilitychange", ()=>{
     formAbandonAll();
     dinfo("session_checkpoint", { duration_ms:Date.now()-SESSION.startedMs, scroll_depth:diag.maxScroll, log_count:diag.logs.length });
     sampleMemory();
-    diagSinkSend("session_end");
   } else if(CONFIGURED && user && _lastFeedAt && Date.now()-_lastFeedAt>60000){
     loadFeed();   /* tab wapas focus pe stale feed refresh */
   }
@@ -1107,7 +1046,7 @@ function viewDiagnostics(){
   const catChip=(id,label)=>`<button class="chip ${cf===id?"active":""}" data-act="diag-cat" data-cat="${id}">${label}</button>`;
   const deadTop=Object.entries(r.dead_click_map||{}).sort((a,b)=>b[1]-a[1]).slice(0,5).map(x=>x[0]+" ("+x[1]+")").join(", ");
   const topEvents=Object.entries(r.event_counts||{}).sort((a,b)=>b[1]-a[1]).slice(0,8).map(x=>`<div><span>${esc(x[0])}</span><b>${x[1]}</b></div>`).join("") || `<div class="pmuted">—</div>`;
-  const ss=sinkStatus();
+
   app.innerHTML=`
     <button class="back" data-go="#/settings">← Settings</button>
     <div class="card">
@@ -1130,14 +1069,8 @@ function viewDiagnostics(){
       <div class="note"><b>Email report</b> se ${DIAG_EMAIL} pe compose khulega — events pehle se bhare honge, sirf Send dabana hai. Bade logs ke liye <b>Share</b> ya <b>Export</b> — poori file attach ho jaati hai.</div>
     </div>
     <div class="card">
-      <div style="font-weight:700;margin-bottom:8px">Supabase logs</div>
-      <div class="kv">
-        <div><span>configured</span><b>${sinkReady()?"yes":"no"}</b></div>
-        <div><span>last send</span><b>${ss?esc(String(ss.at).slice(11,19)):"—"}</b></div>
-        <div><span>events sent</span><b>${ss?ss.events:"—"}</b></div>
-        <div><span>result</span><b style="color:${ss&&ss.ok?"var(--green)":"var(--danger)"}">${ss?(ss.ok?"ok":esc(ss.error||"failed")):"—"}</b></div>
-      </div>
-      <button class="btn block" style="margin-top:12px" data-act="diag-sync-now">Sync now</button>
+      <div style="font-weight:700;margin-bottom:8px">Logs kahan hain</div>
+      <div class="pmuted" style="font-size:13px">Ye logs sirf <b>tumhare browser</b> me hain (local). Koi server pe nahi bhejta. Nikaalne ke liye upar <b>Email</b>, <b>Share</b> ya <b>Export</b> use karo.</div>
     </div>
     <div class="card">
       <div style="font-weight:700;margin-bottom:8px">Web vitals (RUM)</div>
@@ -1666,7 +1599,6 @@ document.addEventListener("click", async (e)=>{
   if(act==="diag-txt") return downloadFile(diagFile("txt").name, diagFile("txt").text, diagFile("txt").mime);
   if(act==="diag-filter"){ diag.filter=actEl.getAttribute("data-level")||"all"; return render(); }
   if(act==="diag-cat"){ diag.catFilter=actEl.getAttribute("data-cat")||"all"; return render(); }
-  if(act==="diag-sync-now"){ if(!sinkReady()){ toast("Supabase sink off hai"); return; } toast("Bhej raha hoon…"); diagSinkSend("manual"); setTimeout(()=>render(), 2500); return; }
   if(act==="fb-rate"){ diag.fb=Number(actEl.getAttribute("data-rate"))||null; toast("Rating "+diag.fb+"★"); return render(); }
   if(act==="fb-submit"){ const ta=document.getElementById("fbText"); const t=(ta&&ta.value)||""; dinfo("feedback_submitted", { rating:diag.fb, page:screenName(), comment_len:t.trim().length }); toast("Feedback bhej diya 🙏"); diag.fb=null; return render(); }
 
