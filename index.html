@@ -794,6 +794,15 @@ function logPageView(){
   dinfo("page_view", { url_path: location.hash.replace(/^#/,"")||"/feed", previous_route: prev, title: document.title });
 }
 function render(){
+  /* error boundary: ek error se poora UI white-screen na ho */
+  try{ renderView(); }
+  catch(err){
+    console.error(err);
+    diagError("render_failed", err, { route: screenName() });
+    try{ renderErrorScreen(); }catch(e){}
+  }
+}
+function renderView(){
   if(!CONFIGURED) return viewSetup();
   renderHeader();
   const r=route();
@@ -804,6 +813,18 @@ function render(){
   if(r[0]==="settings") return viewSettings();
   if(r[0]==="diagnostics") return viewDiagnostics();
   return viewFeed();
+}
+function renderErrorScreen(){
+  const app=document.getElementById("app");
+  if(!app) return;
+  app.innerHTML=`
+    <div class="card" style="text-align:center;margin-top:36px">
+      <div style="font-size:40px">😵</div>
+      <div style="font-weight:700;margin:8px 0 4px">Kuch gadbad ho gayi</div>
+      <div class="pmuted">Reload karo — tumhara data safe hai.</div>
+      <button class="btn primary block" style="margin-top:14px" data-act="reload-app">Reload</button>
+      <button class="btn block" style="margin-top:8px" data-go="#/feed">Feed par jao</button>
+    </div>`;
 }
 
 function renderHeader(){
@@ -1080,7 +1101,7 @@ function viewFeed(){
       <button class="btn primary" data-go="#/login">Sign in / Create profile</button></div>`;
   }
   if(posts.length){
-    html += posts.map(p=>postHTML(p)).join("");
+    html += posts.map(safePostHTML).join("");
     if(posts.length>=feedLimit) html += `<div style="text-align:center;margin:14px 0"><button class="btn" data-act="load-more">Load more</button></div>`;
   } else if(feedLoading){
     html += skeletonCards();
@@ -1140,7 +1161,7 @@ function viewProfile(id){
         </div>
       </div>
       <div class="tabsline"><button class="active">Posts</button></div>
-      ${list.length?list.map(p=>postHTML(p)).join(""):`<div class="empty"><div class="big">📭</div>Koi post nahi.</div>`}`;
+      ${list.length?list.map(safePostHTML).join(""):`<div class="empty"><div class="big">📭</div>Koi post nahi.</div>`}`;
     wireCarousels();
   })();
 }
@@ -1182,6 +1203,11 @@ function skeletonCards(n=3){
     s+=`<div class="skel"><div class="srow"><div class="sav"></div><div style="flex:1"><div class="ln" style="width:38%"></div></div></div><div class="ln" style="width:92%"></div><div class="ln" style="width:68%"></div></div>`;
   }
   return s;
+}
+
+function safePostHTML(p){
+  try{ return postHTML(p); }
+  catch(e){ diagError("post_render_failed", e, { post_id:p && p.id }); return ""; }
 }
 
 function postHTML(p){
@@ -1452,10 +1478,12 @@ window.addEventListener("resize", ()=>{ const ov=document.getElementById("pdfRea
    EVENT DELEGATION
    ============================================================ */
 document.addEventListener("click", async (e)=>{
+ let actEl=null, act=null;
+ try{
   const goEl=e.target.closest("[data-go]"); if(goEl){ go(goEl.getAttribute("data-go")); return; }
   const tabEl=e.target.closest("[data-tab]"); if(tabEl){ loginTab=tabEl.getAttribute("data-tab"); viewLogin(); return; }
-  const actEl=e.target.closest("[data-act]"); if(!actEl) return;
-  const act=actEl.getAttribute("data-act"), id=actEl.getAttribute("data-id");
+  actEl=e.target.closest("[data-act]"); if(!actEl) return;
+  act=actEl.getAttribute("data-act"); const id=actEl.getAttribute("data-id");
 
   if(act==="signout") return signOut();
 
@@ -1603,6 +1631,12 @@ document.addEventListener("click", async (e)=>{
     return;
   }
   if(act==="edit-profile") return openEdit();
+  if(act==="reload-app"){ location.reload(); return; }
+ }catch(err){
+  console.error(err);
+  diagError("click_handler_failed", err, { action: (actEl && actEl.getAttribute("data-act"))||"?" });
+  toast("Kuch galat ho gaya — dobara try karo");
+ }
 });
 
 document.addEventListener("keydown", (e)=>{
