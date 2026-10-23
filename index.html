@@ -276,7 +276,7 @@ const DIAG_KEY = "pulse_diag";
 const DIAG_LOGS_KEY = "pulse_diag_logs";
 const DIAG_SALT_KEY = "pulse_diag_salt";
 const SCHEMA_VERSION = "1.1.0";   /* categories + 6 severity levels + naye envelope fields */
-const APP_VERSION = "4.2.0";
+const APP_VERSION = "4.3.0";
 const APP_ID = "pulse-web";
 const RELEASE_CHANNEL = /[?&]beta=1/.test(location.search) ? "beta" : "production";
 const DEBUG_MODE = /[?&]debug=1/.test(location.search);   /* trace logs sirf tab */
@@ -290,6 +290,10 @@ const CATEGORIES = ["app","error","security","performance","user_activity","api"
 const DIAG_RETENTION = { trace:1, debug:2, info:7, warn:14, error:30, fatal:90 };
 const CATEGORY_RETENTION = { security:90, audit:90, database:30, analytics:30, api:14, performance:14 };
 const DIAG_MAX = 1200;
+const DIAG_LIVE_KEY = "pulse_diag_live";          /* clean-exit flag (crash detect) */
+const DIAG_LAST_KEY = "pulse_diag_last_session";  /* pichle session ka snapshot */
+const ANALYTICS_KEY = "pulse_analytics";          /* local analytics store */
+const BREADCRUMB_MAX = 30;
 /* Diagnostics ab sirf LOCAL hain (browser me). Koi server upload nahi. */
 
 /* ---- privacy: identical redaction rules everywhere ---- */
@@ -380,7 +384,8 @@ async function setUserHash(rawId){
 const diag = {
   enabled: localStorage.getItem(DIAG_KEY) !== "off",
   logs: [], attempts:{}, vitals:{}, forms:{},
-  counters:{ errors:0, warnings:0, rageClicks:0, deadClicks:0, errorStates:0, apiErrors:0, apiSlow:0, rateLimited:0, longTasks:0, permissionDenied:0, loginsFailed:0, conversions:0, deadClickMap:{}, eventCounts:{} },
+  counters:{ errors:0, warnings:0, rageClicks:0, deadClicks:0, errorStates:0, apiErrors:0, apiSlow:0, rateLimited:0, longTasks:0, permissionDenied:0, loginsFailed:0, conversions:0, deadClickMap:{}, eventCounts:{}, errorGroups:{} },
+  breadcrumbs:[],
   max: DIAG_MAX, retention: DIAG_RETENTION,
   sample:{ trace:0.1, debug:0.3, info:1, warn:1, error:1, fatal:1 },
   ttfvMs:null, maxScroll:0, filter:"all", catFilter:"all", fb:null,
@@ -425,6 +430,9 @@ function dlog(severity, event_name, opts){
   diag.counters.eventCounts[event_name] = (diag.counters.eventCounts[event_name]||0)+1;
   if(severity==="error" || severity==="fatal") diag.counters.errors++;
   if(severity==="warn") diag.counters.warnings++;
+  /* breadcrumb — crash report ke liye rolling buffer (sirf last 30) */
+  diag.breadcrumbs.push({ t:String(ev.timestamp).slice(11,19), e:event_name, c:ev.category, r:ev.screen_or_route });
+  if(diag.breadcrumbs.length>BREADCRUMB_MAX) diag.breadcrumbs.shift();
   persist();
 }
 
@@ -455,9 +463,29 @@ const dinfo= (e,p)=>dlog("info",  e, p===undefined?{}:{properties:p});
 const dwarn= (e,p)=>dlog("warn",  e, p===undefined?{}:{properties:p});
 const derr = (e,p)=>dlog("error", e, p===undefined?{}:{properties:p});
 const diagLog = dinfo;
+/* ---- crash reporting helpers ---- */
+function errorFingerprint(name, msg, stack){
+  const frame = String(stack||"").split("\n").find(l=>/\bat\b/.test(l)) || "";
+  const raw = String(name||"")+"|"+String(msg||"").slice(0,120)+"|"+frame.replace(/:\d+:\d+/g,"").trim().slice(0,80);
+  let h=0; for(let i=0;i<raw.length;i++) h=(h*31+raw.charCodeAt(i))>>>0;
+  return "fp_"+h.toString(16);
+}
+/* stack se URL/absolute path hata do (privacy) — sirf function + line:col */
+function sanitizeStack(stack){
+  return String(stack||"").split("\n").slice(0,5).map(l=>
+    l.replace(/https?:\/\/[^\s)]+/g,"<url>").replace(/(^|[\s(])\/[^\s)]+/g,"$1<path>").trim().slice(0,140)
+  ).filter(Boolean).join(" | ");
+}
 function diagError(event, err, props){
   const msg = typeof err==="string" ? err : (err && (err.message || (err.reason && err.reason.message))) || String(err);
-  dlog("error", event, { properties: Object.assign({ message: msg }, props||{}) });
+  const name = (err && (err.name || (err.reason && err.reason.name))) || "Error";
+  const stack = (err && (err.stack || (err.reason && err.reason.stack))) || "";
+  const fp = errorFingerprint(name, msg, stack);
+  const g = diag.counters.errorGroups[fp] = (diag.counters.errorGroups[fp]||0)+1;
+  dlog("error", event, { properties: Object.assign({
+    message: msg, error_name:name, error_fingerprint:fp, error_group_count:g,
+    stack_frames: stack? sanitizeStack(stack) : null
+  }, props||{}) });
 }
 
 /* ---- attempt = intent + outcome + correlation id ---- */
@@ -521,8 +549,10 @@ function formAbandonAll(){
 }
 
 /* ---- global error capture (js_error) ---- */
-window.addEventListener("error", e=>diagError("js_error", { message:e.message||"", source:hostOnly(e.filename||location.href), line:e.lineno||0, col:e.colno||0, stack_hash:(e.error&&e.error.stack)?String(e.error.stack).split("\n").slice(0,4).join(" | "):null }));
-window.addEventListener("unhandledrejection", e=>diagError("js_error", e.reason, { error_type:"unhandled_rejection" }));
+window.addEventListener("error", e=>diagError("js_error", e.error||{name:"Error",message:e.message},
+  { source:hostOnly(e.filename||location.href), line:e.lineno||0, col:e.colno||0, error_type:"uncaught_exception" }));
+window.addEventListener("unhandledrejection", e=>diagError("promise_rejection", e.reason||{name:"UnhandledRejection",message:"no reason"},
+  { error_type:"unhandled_rejection" }));
 
 /* ---- network capture (api_call: endpoint host + status + latency) ---- */
 (function(){
@@ -684,9 +714,84 @@ function pruneLogs(){
   });
   if(diag.logs.length>diag.max) diag.logs=diag.logs.slice(-diag.max);
 }
-function persist(){ try{ pruneLogs(); localStorage.setItem(DIAG_LOGS_KEY, JSON.stringify(diag.logs)); }catch(e){} }
+function persist(){
+  try{
+    pruneLogs();
+    localStorage.setItem(DIAG_LOGS_KEY, JSON.stringify(diag.logs));
+    /* crash hone par pichle breadcrumbs chahiye honge */
+    localStorage.setItem(DIAG_LAST_KEY, JSON.stringify({ session:SESSION.id, route:screenName(), at:Date.now(), breadcrumbs:diag.breadcrumbs.slice(-15) }));
+  }catch(e){}
+}
+/* ---- crash detection: pichla session clean band hua tha? ---- */
+function detectCrash(){
+  try{
+    const prevRaw = localStorage.getItem(DIAG_LIVE_KEY);
+    if(prevRaw){
+      let prev={}; try{ prev=JSON.parse(prevRaw)||{}; }catch(e){}
+      let last=null; try{ last=JSON.parse(localStorage.getItem(DIAG_LAST_KEY)||"null"); }catch(e){}
+      dFatal("crash_suspected", "Pichla session theek se band nahi hua (crash / force-close)", {
+        prev_session: prev.session || (last&&last.session) || null,
+        prev_route: (last&&last.route) || null,
+        prev_started_at: prev.at ? new Date(prev.at).toISOString() : null,
+        last_breadcrumbs: (last&&last.breadcrumbs) || []
+      });
+    }
+    localStorage.setItem(DIAG_LIVE_KEY, JSON.stringify({ session:SESSION.id, at:Date.now() }));
+  }catch(e){}
+}
+function markCleanExit(){
+  try{
+    localStorage.removeItem(DIAG_LIVE_KEY);
+    analytics.session_durations.push(Math.round((Date.now()-SESSION.startedMs)/1000));
+    if(analytics.session_durations.length>50) analytics.session_durations=analytics.session_durations.slice(-50);
+    saveAnalytics();
+  }catch(e){}
+}
+window.addEventListener("pagehide", markCleanExit);
+
+/* ---- local analytics (per-device; koi server nahi) ---- */
+let analytics = (()=>{ try{ return JSON.parse(localStorage.getItem(ANALYTICS_KEY)||"null"); }catch(e){ return null; } })()
+  || { first_seen:null, sessions:0, days:{}, page_views:{}, features:{}, totals:{posts:0,likes:0,comments:0,shares:0,pdfs:0}, session_durations:[] };
+function saveAnalytics(){ try{ localStorage.setItem(ANALYTICS_KEY, JSON.stringify(analytics)); }catch(e){} }
+function dayKey(){ return new Date().toISOString().slice(0,10); }
+function analyticsInit(){
+  try{
+    const d=dayKey();
+    if(!analytics.first_seen) analytics.first_seen=d;
+    analytics.sessions++;
+    analytics.days[d]=(analytics.days[d]||0)+1;
+    saveAnalytics();
+    dAnalytics("analytics_session", "Session #"+analytics.sessions, {
+      sessions_total:analytics.sessions, days_active:Object.keys(analytics.days).length,
+      first_seen:analytics.first_seen, returning: analytics.sessions>1 });
+  }catch(e){}
+}
+function analyticsPage(route){ try{ analytics.page_views[route]=(analytics.page_views[route]||0)+1; saveAnalytics(); }catch(e){} }
+function analyticsFeature(name, inc){ try{ analytics.features[name]=(analytics.features[name]||0)+(inc||1); saveAnalytics(); }catch(e){} }
+function analyticsTotal(name, inc){ try{ analytics.totals[name]=(analytics.totals[name]||0)+(inc||1); saveAnalytics(); }catch(e){} }
+function analyticsSummary(){
+  const days=Object.keys(analytics.days||{}).length;
+  const durs=analytics.session_durations||[];
+  return {
+    first_seen: analytics.first_seen,
+    sessions_total: analytics.sessions,
+    days_active: days,
+    sessions_today: (analytics.days||{})[dayKey()]||0,
+    avg_session_sec: durs.length ? Math.round(durs.reduce((a,b)=>a+b,0)/durs.length) : null,
+    avg_posts_per_session: analytics.sessions ? +(((analytics.totals||{}).posts||0)/analytics.sessions).toFixed(2) : 0,
+    top_pages: Object.entries(analytics.page_views||{}).sort((a,b)=>b[1]-a[1]).slice(0,10),
+    features: analytics.features||{},
+    totals: analytics.totals||{}
+  };
+}
+function crashSummary(){
+  const groups=Object.entries(diag.counters.errorGroups||{}).sort((a,b)=>b[1]-a[1]).slice(0,10)
+    .map(([fp,n])=>({ fingerprint:fp, count:n }));
+  const crashes=diag.logs.filter(l=>l.event_name==="crash_suspected").length;
+  return { crashes_detected:crashes, error_groups:groups, breadcrumbs:diag.breadcrumbs.slice(-15) };
+}
 function diagDataStr(d){ if(d===null||d===undefined) return ""; return typeof d==="string"? d : JSON.stringify(d); }
-function diagCounters(){ const c=Object.assign({}, diag.counters); delete c.deadClickMap; delete c.eventCounts; return c; }
+function diagCounters(){ const c=Object.assign({}, diag.counters); delete c.deadClickMap; delete c.eventCounts; delete c.errorGroups; return c; }
 function diagEnv(){
   const e=Object.assign({}, SESSION.context||{});
   e.online=navigator.onLine; e.viewport=window.innerWidth+"x"+window.innerHeight;
@@ -707,6 +812,9 @@ function diagReport(){
     by_category: diag.logs.reduce((a,l)=>{ const k=l.category||"app"; a[k]=(a[k]||0)+1; return a; }, {}),
     by_severity: diag.logs.reduce((a,l)=>{ const k=l.severity||l.log_level||"info"; a[k]=(a[k]||0)+1; return a; }, {}),
     dead_click_map: diag.counters.deadClickMap,
+    error_groups: Object.entries(diag.counters.errorGroups||{}).sort((a,b)=>b[1]-a[1]).slice(0,20).map(([fp,n])=>({fingerprint:fp,count:n})),
+    analytics: analyticsSummary(),
+    crashes: crashSummary(),
     attempts: Object.values(diag.attempts),
     logs: diag.logs
   };
@@ -739,6 +847,14 @@ function fmtMd(r){
   for(const [k,v] of Object.entries(r.counters||{})) s+="- "+k+": "+v+"\n";
   s+="\n## Attempts (intent to outcome)\n\n| started_at | event_name | attempt_id | screen_or_route | outcome |\n| --- | --- | --- | --- | --- |\n";
   for(const a of (r.attempts||[])) s+="| "+a.started_at+" | "+a.event_name+" | "+a.attempt_id+" | "+a.screen_or_route+" | "+a.outcome+" |\n";
+  const ana=r.analytics||{}, crs=r.crashes||{};
+  s+="\n## Analytics\n\n";
+  s+="- sessions: "+ana.sessions_total+"\n- days active: "+ana.days_active+"\n- first seen: "+(ana.first_seen||"—")+"\n- avg session: "+(ana.avg_session_sec!=null?ana.avg_session_sec+"s":"—")+"\n";
+  s+="- totals: "+diagDataStr(ana.totals)+"\n- features: "+diagDataStr(ana.features)+"\n- top pages: "+diagDataStr(ana.top_pages)+"\n";
+  s+="\n## Crashes & error groups\n\n";
+  s+="- crashes detected: "+(crs.crashes_detected||0)+"\n";
+  for(const g of (crs.error_groups||[])) s+="- "+g.fingerprint+" ×"+g.count+"\n";
+  s+="- breadcrumbs: "+((crs.breadcrumbs||[]).map(b=>b.t+" "+b.e).join(" > ")||"—")+"\n";
   s+="\n## Logs by category\n\n";
   for(const [k,v] of Object.entries(r.by_category||{})) s+="- "+k+": "+v+"\n";
   s+="\n## Logs ("+r.logs.length+")\n\n| timestamp | severity | category | event_name | message | attempt_id | request_id | screen_or_route | properties |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n";
@@ -836,6 +952,7 @@ function logPageView(){
   if(prev==="login") formAbandonAll();
   const path=location.hash.replace(/^#/,"")||"/feed";
   dAct("page_view", "Page: "+path, { url_path: path, previous_route: prev, title: document.title });
+  analyticsPage(path);
 }
 function render(){
   /* error boundary: ek error se poora UI white-screen na ho */
@@ -1046,6 +1163,9 @@ function viewDiagnostics(){
   const catChip=(id,label)=>`<button class="chip ${cf===id?"active":""}" data-act="diag-cat" data-cat="${id}">${label}</button>`;
   const deadTop=Object.entries(r.dead_click_map||{}).sort((a,b)=>b[1]-a[1]).slice(0,5).map(x=>x[0]+" ("+x[1]+")").join(", ");
   const topEvents=Object.entries(r.event_counts||{}).sort((a,b)=>b[1]-a[1]).slice(0,8).map(x=>`<div><span>${esc(x[0])}</span><b>${x[1]}</b></div>`).join("") || `<div class="pmuted">—</div>`;
+  const an=analyticsSummary(), cr=crashSummary(), t=an.totals||{};
+  const topPages=(an.top_pages||[]).map(x=>esc(x[0])+" ("+x[1]+")").join(", ") || "—";
+  const featStr=Object.entries(an.features||{}).map(x=>esc(x[0])+" ("+x[1]+")").join(", ") || "—";
 
   app.innerHTML=`
     <button class="back" data-go="#/settings">← Settings</button>
@@ -1071,6 +1191,29 @@ function viewDiagnostics(){
     <div class="card">
       <div style="font-weight:700;margin-bottom:8px">Logs kahan hain</div>
       <div class="pmuted" style="font-size:13px">Ye logs sirf <b>tumhare browser</b> me hain (local). Koi server pe nahi bhejta. Nikaalne ke liye upar <b>Email</b>, <b>Share</b> ya <b>Export</b> use karo.</div>
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:8px">Analytics (is device par)</div>
+      <div class="kv">
+        <div><span>sessions</span><b>${an.sessions_total}</b></div>
+        <div><span>days active</span><b>${an.days_active}</b></div>
+        <div><span>first seen</span><b>${esc(an.first_seen||"—")}</b></div>
+        <div><span>avg session</span><b>${an.avg_session_sec!=null?an.avg_session_sec+"s":"—"}</b></div>
+        <div><span>posts / likes / comments</span><b>${t.posts||0} / ${t.likes||0} / ${t.comments||0}</b></div>
+        <div><span>shares / PDFs</span><b>${t.shares||0} / ${t.pdfs||0}</b></div>
+      </div>
+      <div class="pmuted" style="font-size:12px;margin-top:10px">Top pages: ${topPages}</div>
+      <div class="pmuted" style="font-size:12px;margin-top:4px">Features: ${featStr}</div>
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:8px">Crash & errors</div>
+      <div class="kv">
+        <div><span>crashes detected</span><b>${cr.crashes_detected}</b></div>
+        <div><span>error groups</span><b>${cr.error_groups.length}</b></div>
+        <div><span>breadcrumbs</span><b>${(cr.breadcrumbs||[]).length}</b></div>
+      </div>
+      ${cr.error_groups.length?`<div class="pmuted" style="font-size:12px;margin-top:10px">${cr.error_groups.map(g=>esc(g.fingerprint)+" ×"+g.count).join(" · ")}</div>`:""}
+      <button class="btn block" style="margin-top:12px" data-act="diag-crash-copy">Copy crash report</button>
     </div>
     <div class="card">
       <div style="font-weight:700;margin-bottom:8px">Web vitals (RUM)</div>
@@ -1399,6 +1542,7 @@ async function createPost(){
   const error=ins.error;
   if(error){ console.error(error); dbFail("post_create_result", error, {outcome:"failed"}); attemptFail(aid, error.message, {stage:"insert"}); toast(friendlyError(error, "Post nahi hua")); return; }
   dcat("user_activity","info","post_create_result", "Post banaya ("+type+")", { outcome:"success", type, media_count:media.length });
+  analyticsTotal("posts"); analyticsFeature("post_"+type);
   attemptOk(aid, { type, media_count:media.length });
   trackConversion("create_post", media.length||null, "feed");
   clearPreview();
@@ -1458,6 +1602,7 @@ let pdfDoc=null, pdfPageNo=1;
 async function openPdfReader(url){
   if(!url) return;
   dAct("pdf_view_result", "PDF khola", { outcome:"open" });
+  analyticsTotal("pdfs"); analyticsFeature("pdf_read");
   const ov=document.getElementById("pdfReader");
   ov.classList.add("show");
   pdfPageNo=1; pdfDoc=null;
@@ -1599,6 +1744,11 @@ document.addEventListener("click", async (e)=>{
   if(act==="diag-txt") return downloadFile(diagFile("txt").name, diagFile("txt").text, diagFile("txt").mime);
   if(act==="diag-filter"){ diag.filter=actEl.getAttribute("data-level")||"all"; return render(); }
   if(act==="diag-cat"){ diag.catFilter=actEl.getAttribute("data-cat")||"all"; return render(); }
+  if(act==="diag-crash-copy"){
+    const rep=JSON.stringify({ analytics:analyticsSummary(), crashes:crashSummary(), recent_logs:diag.logs.slice(-40) }, null, 2);
+    try{ await navigator.clipboard.writeText(rep); toast("Crash report copy ho gaya 📋"); }catch(e){ toast("Copy fail"); }
+    return;
+  }
   if(act==="fb-rate"){ diag.fb=Number(actEl.getAttribute("data-rate"))||null; toast("Rating "+diag.fb+"★"); return render(); }
   if(act==="fb-submit"){ const ta=document.getElementById("fbText"); const t=(ta&&ta.value)||""; dinfo("feedback_submitted", { rating:diag.fb, page:screenName(), comment_len:t.trim().length }); toast("Feedback bhej diya 🙏"); diag.fb=null; return render(); }
 
@@ -1616,6 +1766,7 @@ document.addEventListener("click", async (e)=>{
     const p=posts.find(x=>x.id===id);
     if(p) p.likes=[{count: Math.max(0, cur+(liked?-1:1))}];
     dAct("post_like_result", liked?"Like hataya":"Like kiya", { post_id:id, outcome: liked?"unliked":"liked" });
+    if(!liked) analyticsTotal("likes");
     const res = liked
       ? await sb.from("likes").delete().eq("post_id",id).eq("user_id",user.id)
       : await sb.from("likes").insert({ post_id:id, user_id:user.id });
@@ -1641,6 +1792,7 @@ document.addEventListener("click", async (e)=>{
     const { error }=await sb.from("comments").insert({ post_id:id, author:user.id, text });
     if(error){ dbFail("comment_submit_result", error, {outcome:"failed"}); return toast(friendlyError(error, "Comment nahi gaya")); }
     dAct("comment_submit_result", "Comment kiya", { post_id:id, outcome:"success" });
+    analyticsTotal("comments");
     input.value="";
     /* count ko in-place theek karo (pehla comment bhi 0 se 1 ho) */
     const p=posts.find(x=>x.id===id);
@@ -1662,6 +1814,7 @@ document.addEventListener("click", async (e)=>{
       else { await navigator.clipboard.writeText(link); toast("Link copied! 🔗"); }
     }catch(err){}
     dAct("post_share", "Post share kiya", { post_id:id, method: navigator.share?"native":"clipboard" });
+    analyticsTotal("shares");
     return;
   }
   if(act==="delete"){
@@ -1721,6 +1874,8 @@ document.getElementById("edSave").onclick=async ()=>{
    BOOT
    ============================================================ */
 (async function boot(){
+  detectCrash();
+  analyticsInit();
   dcat("app","info","session_start", "App start", { start_type:"warm", app_version:APP_VERSION, environment:ENVIRONMENT });
   if(!CONFIGURED){ viewSetup(); return; }
   const { data:{ session } }=await sb.auth.getSession();
