@@ -54,7 +54,7 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p out
-          cp android/app/build/outputs/apk/release/app-release.apk out/Pulse-1.1.0.apk
+          cp android/app/build/outputs/apk/release/app-release.apk out/Pulse-1.1.0.apk || cp android/app/build/outputs/apk/release/*.apk out/Pulse-1.1.0.apk
           ls -la out
 
       - name: Upload artifact
