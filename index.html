@@ -81,7 +81,18 @@
   .cform input{flex:1}
   .empty{text-align:center;color:var(--muted);padding:40px 10px}
   .empty .big{font-size:40px;margin-bottom:8px}
-  .pcover{height:96px;border-radius:16px 16px 0 0;background:linear-gradient(120deg,#7c5cff,#ec4899)}
+  .pcover{height:112px;border-radius:16px 16px 0 0;background:linear-gradient(120deg,#7c5cff,#ec4899);overflow:hidden;position:relative}
+  .pcover img,.pcover video{width:100%;height:100%;object-fit:cover;display:block}
+  .pcover iframe{width:100%;height:100%;border:0;display:block;background:transparent}
+  .avatar .avmedia,.avatar img,.avatar video{width:100%;height:100%;object-fit:cover;display:block}
+  .mrow{display:flex;gap:10px;align-items:flex-start;margin-top:6px}
+  .mprev{width:64px;height:64px;border-radius:12px;background:var(--bg2);border:1px solid var(--border);overflow:hidden;flex:0 0 auto;display:grid;place-items:center;font-size:11px;color:var(--muted)}
+  .mprev.wide{width:100%;height:78px}
+  .mprev img,.mprev video{width:100%;height:100%;object-fit:cover;display:block}
+  .mprev iframe{width:100%;height:100%;border:0;display:block}
+  .mslot{flex:1;display:flex;flex-direction:column;gap:6px}
+  .mslot input,.mslot textarea{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 11px;color:var(--text);font:inherit;font-size:13px}
+  .mslot textarea{min-height:54px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
   .pcard{margin-top:-40px;padding:0 16px 16px}
   .pmeta{display:flex;justify-content:space-between;align-items:flex-end;gap:10px}
   .pstats{display:flex;gap:18px;margin-top:14px;color:var(--muted);font-size:13.5px}
@@ -93,7 +104,7 @@
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;place-items:center;z-index:150;padding:16px}
   .modal.show{display:grid}
-  .modal .box{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:20px;width:100%;max-width:400px}
+  .modal .box{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:20px;width:100%;max-width:400px;max-height:88vh;overflow-y:auto}
   .note{font-size:12.5px;color:var(--muted);background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;margin-top:12px}
   .linkbtn{background:none;border:none;color:var(--accent);font-weight:600;font-size:13.5px;padding:0}
   .back{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-weight:600;font-size:14px;margin:14px 0 0}
@@ -214,6 +225,33 @@
     <textarea id="edBio" maxlength="160" style="min-height:60px"></textarea>
     <label class="f">Avatar emoji</label>
     <input id="edEmoji" maxlength="3" />
+
+    <label class="f">Profile photo</label>
+    <div class="mrow">
+      <div class="mprev" id="edAvPrev">—</div>
+      <div class="mslot">
+        <label class="file-btn" style="font-size:13px">📎 Upload (image / SVG / GIF / 10s video)
+          <input type="file" id="edAvFile" accept="image/*,video/*,.svg,.gif" style="display:none" /></label>
+        <input id="edAvUrl" placeholder="ya link paste karo (https://…)" />
+        <button class="btn sm ghost" id="edAvClear" type="button">Remove</button>
+      </div>
+    </div>
+
+    <label class="f">Banner</label>
+    <div class="mrow">
+      <div class="mprev wide" id="edBnPrev">—</div>
+      <div class="mslot">
+        <label class="file-btn" style="font-size:13px">📎 Upload (image / SVG / GIF / 10s video)
+          <input type="file" id="edBnFile" accept="image/*,video/*,.svg,.gif" style="display:none" /></label>
+        <input id="edBnUrl" placeholder="ya link paste karo (https://…)" />
+        <button class="btn sm ghost" id="edBnClear" type="button">Remove</button>
+      </div>
+    </div>
+    <label class="f">Banner HTML (optional — sandboxed, script nahi chalega)</label>
+    <textarea id="edBnHtml" maxlength="20000" placeholder="&lt;div style='...'&gt;...&lt;/div&gt;"></textarea>
+
+    <label class="f">Theme JSON (optional)</label>
+    <input id="edTheme" placeholder='{"accent":"#7c5cff","accent2":"#ec4899"}' />
     <div class="crow">
       <button class="btn primary block" id="edSave">Save</button>
       <button class="btn block" id="edCancel">Cancel</button>
@@ -287,6 +325,8 @@ function toast(msg){
 function avatarHTML(u,size=""){
   const cls="avatar"+(size?" "+size:"");
   if(!u) return `<div class="${cls}" style="background:#444">?</div>`;
+  const av=u.avatar;
+  if(av && (av.url || av.html)) return `<div class="${cls}" style="background:${colorFor(u.id)}">${mediaBox(av,"avmedia","avatar")}</div>`;
   if(u.emoji) return `<div class="${cls}" style="background:${colorFor(u.id)}">${esc(u.emoji)}</div>`;
   const initial=(u.name?u.name.trim()[0]:"?").toUpperCase();
   return `<div class="${cls}" style="background:${colorFor(u.id)}">${esc(initial)}</div>`;
@@ -308,7 +348,7 @@ const DIAG_KEY = "pulse_diag";
 const DIAG_LOGS_KEY = "pulse_diag_logs";
 const DIAG_SALT_KEY = "pulse_diag_salt";
 const SCHEMA_VERSION = "1.1.0";   /* categories + 6 severity levels + naye envelope fields */
-const APP_VERSION = "4.3.0";
+const APP_VERSION = "4.4.0";
 const APP_ID = "pulse-web";
 const RELEASE_CHANNEL = /[?&]beta=1/.test(location.search) ? "beta" : "production";
 const DEBUG_MODE = /[?&]debug=1/.test(location.search);   /* trace logs sirf tab */
@@ -1124,10 +1164,10 @@ async function loadMyLikes(){
   (data||[]).forEach(l=>myLikes.add(l.post_id));
 }
 const POST_COLS_BASE = `id, type, text, media_url, created_at,
-  author:profiles!posts_author_fkey(id, name, handle, emoji, is_anonymous),
+  author:profiles!posts_author_fkey(id, name, handle, emoji, is_anonymous, avatar),
   likes(count), comments(count)`;
 const POST_SELECT = `id, type, text, media, media_url, created_at,
-  author:profiles!posts_author_fkey(id, name, handle, emoji, is_anonymous),
+  author:profiles!posts_author_fkey(id, name, handle, emoji, is_anonymous, avatar),
   likes(count), comments(count)`;
 
 function postsQuery(select, opts={}){
@@ -1396,7 +1436,7 @@ function viewProfile(id){
     app.innerHTML=`
       <button class="back" data-go="#/feed">← Feed</button>
       <div class="card" style="padding:0;overflow:hidden">
-        <div class="pcover"></div>
+        <div class="pcover" style="${(u.banner && (u.banner.url || u.banner.html)) ? "" : "background:" + bannerGrad(u)}">${mediaBox(u.banner, "", "banner")}</div>
         <div class="pcard">
           <div class="pmeta">
             <div style="display:flex;align-items:flex-end;gap:12px">
@@ -1513,7 +1553,7 @@ async function loadComments(postId){
   const box=document.querySelector(`[data-comments="${postId}"] .clist`);
   if(!box) return;
   const { data } = await sb.from("comments")
-    .select("id, text, created_at, author:profiles!comments_author_fkey(id,name,handle,emoji,is_anonymous)")
+    .select("id, text, created_at, author:profiles!comments_author_fkey(id,name,handle,emoji,is_anonymous,avatar)")
     .eq("post_id",postId).order("created_at",{ascending:true}).limit(100);
   const list=data||[];
   box.innerHTML = list.length ? list.map(c=>{
@@ -1924,11 +1964,112 @@ document.addEventListener("keydown", (e)=>{
   }
 });
 
+/* ============================================================
+   PROFILE MEDIA — photo + banner
+   image / svg / gif / 10-sec video / link / sandboxed HTML + theme JSON
+   ============================================================ */
+function safeColor(c, fb){ return /^#[0-9a-f]{6}$/i.test(String(c || "")) ? c : fb; }
+function bannerGrad(u){
+  const th = (u && u.theme) || {};
+  return "linear-gradient(120deg," + safeColor(th.accent, "#7c5cff") + "," + safeColor(th.accent2, "#ec4899") + ")";
+}
+function mediaBox(m, cls, alt){
+  if(!m) return "";
+  const c = cls ? ' class="' + cls + '"' : "";
+  if(m.kind === "html" && m.html){
+    /* sandbox="" → koi script nahi chal sakta (XSS safe) */
+    return '<iframe' + c + ' sandbox="" scrolling="no" srcdoc="' + esc(m.html) + '"></iframe>';
+  }
+  if(!m.url) return "";
+  if(m.kind === "video"){
+    return '<video' + c + ' src="' + esc(m.url) + '" autoplay loop muted playsinline></video>';
+  }
+  return '<img' + c + ' src="' + esc(m.url) + '" alt="' + esc(alt || "profile") + '" loading="lazy" />';
+}
+function mediaFromUrl(u){
+  const s = String(u || "").trim();
+  if(!s || !/^https?:\/\//i.test(s)) return null;
+  const low = s.toLowerCase().split("?")[0];
+  const kind = /\.(mp4|webm|mov|m4v)$/.test(low) ? "video"
+             : /\.svg$/.test(low) ? "svg"
+             : /\.gif$/.test(low) ? "gif" : "image";
+  return { kind, url: s };
+}
+function videoDuration(file){
+  return new Promise(res => {
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.onloadedmetadata = () => { const d = v.duration || 0; try{ URL.revokeObjectURL(v.src); }catch(e){} res(d); };
+    v.onerror = () => res(0);
+    v.src = URL.createObjectURL(file);
+  });
+}
+async function uploadProfileMedia(file, slot){
+  if(!user || !file) return null;
+  if(file.size > 50 * 1024 * 1024){ toast("File 50 MB se badi hai"); return null; }
+  const isVid = file.type.startsWith("video/");
+  if(isVid){
+    const d = await videoDuration(file);
+    if(d > 10.6){ toast("Video max 10 second ka hona chahiye"); return null; }
+  }
+  const ext = (file.name.split(".").pop() || "bin").toLowerCase().slice(0, 5);
+  const path = user.id + "/profile-" + slot + "-" + crypto.randomUUID() + "." + ext;
+  const up = await sb.storage.from("media").upload(path, file, { cacheControl:"3600", upsert:false });
+  if(up.error){ toast(friendlyError(up.error, "Upload fail")); return null; }
+  const url = sb.storage.from("media").getPublicUrl(path).data.publicUrl;
+  const kind = isVid ? "video"
+             : file.type === "image/svg+xml" ? "svg"
+             : file.type === "image/gif" ? "gif" : "image";
+  return { kind, url, path, mime:file.type, name:file.name };
+}
+const _ed = { avatar: undefined, banner: undefined, theme: undefined };
+function renderMediaPrev(el, m){
+  if(!el) return;
+  if(!m){ el.innerHTML = "—"; return; }
+  el.innerHTML = mediaBox(m, "", "preview") || "—";
+}
+function wireMediaSlot(slot){
+  const isAv = slot === "avatar";
+  const fileEl = document.getElementById(isAv ? "edAvFile" : "edBnFile");
+  const urlEl  = document.getElementById(isAv ? "edAvUrl"  : "edBnUrl");
+  const prevEl = document.getElementById(isAv ? "edAvPrev" : "edBnPrev");
+  const clrEl  = document.getElementById(isAv ? "edAvClear": "edBnClear");
+  if(fileEl) fileEl.onchange = async () => {
+    const f = fileEl.files && fileEl.files[0];
+    fileEl.value = "";
+    if(!f) return;
+    toast("Upload ho raha hai…");
+    const m = await uploadProfileMedia(f, slot);
+    if(m){ _ed[slot] = m; renderMediaPrev(prevEl, m); toast("Lag gaya ✓"); }
+  };
+  if(urlEl) urlEl.onchange = () => {
+    const raw = (urlEl.value || "").trim();
+    if(!raw){ return; }
+    const m = mediaFromUrl(raw);
+    if(!m){ toast("Link http:// ya https:// se shuru hona chahiye"); return; }
+    _ed[slot] = m; renderMediaPrev(prevEl, m);
+  };
+  if(clrEl) clrEl.onclick = () => {
+    _ed[slot] = null;
+    renderMediaPrev(prevEl, null);
+    if(urlEl) urlEl.value = "";
+  };
+}
+
 function openEdit(){
   if(!profile) return;
   document.getElementById("edName").value=profile.name||"";
   document.getElementById("edBio").value=profile.bio||"";
   document.getElementById("edEmoji").value=profile.emoji||"";
+  _ed.avatar=undefined; _ed.banner=undefined; _ed.theme=undefined;
+  const av=profile.avatar||null, bn=profile.banner||null, th=profile.theme||{};
+  document.getElementById("edAvUrl").value=(av && av.url)?av.url:"";
+  document.getElementById("edBnUrl").value=(bn && bn.url)?bn.url:"";
+  document.getElementById("edBnHtml").value=(bn && bn.kind==="html")?(bn.html||""):"";
+  document.getElementById("edTheme").value=(th.accent||th.accent2)?JSON.stringify(th):"";
+  renderMediaPrev(document.getElementById("edAvPrev"), av);
+  renderMediaPrev(document.getElementById("edBnPrev"), bn);
+  wireMediaSlot("avatar"); wireMediaSlot("banner");
   document.getElementById("editModal").classList.add("show");
 }
 document.getElementById("edCancel").onclick=()=>document.getElementById("editModal").classList.remove("show");
@@ -1939,6 +2080,17 @@ document.getElementById("edSave").onclick=async ()=>{
     bio:(document.getElementById("edBio").value||"").trim(),
     emoji:(document.getElementById("edEmoji").value||"").trim()
   };
+  if(_ed.avatar!==undefined) patch.avatar=_ed.avatar;
+  if(_ed.banner!==undefined) patch.banner=_ed.banner;
+  const bnHtml=(document.getElementById("edBnHtml").value||"").trim();
+  if(bnHtml) patch.banner={ kind:"html", html: bnHtml.slice(0,20000) };
+  const thRaw=(document.getElementById("edTheme").value||"").trim();
+  if(thRaw){
+    try{
+      const t=JSON.parse(thRaw);
+      patch.theme={ accent: safeColor(t.accent,"#7c5cff"), accent2: safeColor(t.accent2,"#ec4899") };
+    }catch(e){ return toast("Theme JSON galat hai"); }
+  } else if(profile.theme){ patch.theme=null; }
   const { data, error }=await sb.from("profiles").update(patch).eq("id",profile.id).select().single();
   if(error){ dbFail("profile_update_result", error); return toast(friendlyError(error, "Profile update nahi hua")); }
   profile=data; document.getElementById("editModal").classList.remove("show");
