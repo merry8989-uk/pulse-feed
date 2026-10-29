@@ -92,6 +92,9 @@
   .mbtns{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
   #edAvUrl,#edBnUrl,#edTheme{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;color:var(--text);font:inherit;font-size:13px;margin-top:8px}
   #edBnHtml{width:100%;min-height:64px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;color:var(--text);font-family:ui-monospace,Menlo,monospace;font-size:12px;margin-top:8px}
+  #edAvFit,#edAvPos,#edAvShape,#edBnFit,#edBnPos,#edBnShape{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;color:var(--text);font:inherit;font-size:13px;margin-top:8px}
+  #edAvZoom,#edBnZoom,#edBnH{width:100%;margin-top:10px;accent-color:var(--accent)}
+  .zv{font-size:11.5px;color:var(--muted);margin-left:6px;font-weight:400}
   .adv{margin-top:16px;border:1px solid var(--border);border-radius:12px;padding:0 13px;background:rgba(255,255,255,.015)}
   .adv summary{list-style:none;cursor:pointer;padding:12px 0;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:7px}
   .adv summary::-webkit-details-marker{display:none}
@@ -238,19 +241,55 @@
     <div class="mbtns">
       <label class="file-btn" style="font-size:13px">📎 Upload
         <input type="file" id="edAvFile" accept="image/*,video/*,.svg,.gif" style="display:none" /></label>
+      <button class="btn sm" id="edAvCrop" type="button">✂️ Crop</button>
       <button class="btn sm ghost" id="edAvClear" type="button">Remove</button>
     </div>
     <input id="edAvUrl" placeholder="ya link paste karo (https://…)" />
+    <details class="adv">
+      <summary>Adjust — fit / position / zoom / shape</summary>
+      <label class="f">Fit</label>
+      <select id="edAvFit"><option value="cover">Cover — poora bhar do</option><option value="contain">Contain — poora dikhe</option></select>
+      <label class="f">Position</label>
+      <select id="edAvPos">
+        <option value="50% 50%">Center</option><option value="50% 0%">Top</option><option value="50% 100%">Bottom</option>
+        <option value="0% 50%">Left</option><option value="100% 50%">Right</option>
+        <option value="0% 0%">Top left</option><option value="100% 0%">Top right</option>
+        <option value="0% 100%">Bottom left</option><option value="100% 100%">Bottom right</option>
+      </select>
+      <label class="f">Zoom <span class="zv" id="edAvZoomV">100%</span></label>
+      <input id="edAvZoom" type="range" min="100" max="300" value="100" />
+      <label class="f">Shape</label>
+      <select id="edAvShape"><option value="circle">Circle</option><option value="round">Rounded</option><option value="square">Square</option></select>
+      <div class="padb"></div>
+    </details>
 
     <label class="f">Banner</label>
     <div class="mprev wide" id="edBnPrev">—</div>
     <div class="mbtns">
       <label class="file-btn" style="font-size:13px">📎 Upload
         <input type="file" id="edBnFile" accept="image/*,video/*,.svg,.gif" style="display:none" /></label>
+      <button class="btn sm" id="edBnCrop" type="button">✂️ Crop</button>
       <button class="btn sm ghost" id="edBnClear" type="button">Remove</button>
     </div>
     <input id="edBnUrl" placeholder="ya link paste karo (https://…)" />
-    <div class="note" style="margin-top:8px;font-size:11.5px">Photo aur banner dono me: image, SVG, GIF, 10 second tak ka video, ya koi link.</div>
+    <details class="adv">
+      <summary>Adjust — fit / position / zoom / height</summary>
+      <label class="f">Fit</label>
+      <select id="edBnFit"><option value="cover">Cover — poora bhar do</option><option value="contain">Contain — poora dikhe</option></select>
+      <label class="f">Position</label>
+      <select id="edBnPos">
+        <option value="50% 50%">Center</option><option value="50% 0%">Top</option><option value="50% 100%">Bottom</option>
+        <option value="0% 50%">Left</option><option value="100% 50%">Right</option>
+        <option value="0% 0%">Top left</option><option value="100% 0%">Top right</option>
+        <option value="0% 100%">Bottom left</option><option value="100% 100%">Bottom right</option>
+      </select>
+      <label class="f">Zoom <span class="zv" id="edBnZoomV">100%</span></label>
+      <input id="edBnZoom" type="range" min="100" max="300" value="100" />
+      <label class="f">Banner height <span class="zv" id="edBnHV">112px</span></label>
+      <input id="edBnH" type="range" min="80" max="260" value="112" />
+      <div class="padb"></div>
+    </details>
+    <div class="note" style="margin-top:8px;font-size:11.5px">Photo aur banner dono me: image, SVG, GIF, 10 second tak ka video, ya koi link. Crop sirf image pe chalta hai.</div>
 
     <details class="adv">
       <summary>Advanced — HTML banner / theme JSON</summary>
@@ -334,7 +373,7 @@ function avatarHTML(u,size=""){
   const cls="avatar"+(size?" "+size:"");
   if(!u) return `<div class="${cls}" style="background:#444">?</div>`;
   const av=u.avatar;
-  if(av && (av.url || av.html)) return `<div class="${cls}" style="background:${colorFor(u.id)}">${mediaBox(av,"avmedia","avatar")}</div>`;
+  if(av && (av.url || av.html)) return `<div class="${cls}" style="background:${colorFor(u.id)};border-radius:${avatarRadius(av)}">${mediaBox(av,"avmedia","avatar")}</div>`;
   if(u.emoji) return `<div class="${cls}" style="background:${colorFor(u.id)}">${esc(u.emoji)}</div>`;
   const initial=(u.name?u.name.trim()[0]:"?").toUpperCase();
   return `<div class="${cls}" style="background:${colorFor(u.id)}">${esc(initial)}</div>`;
@@ -1444,7 +1483,7 @@ function viewProfile(id){
     app.innerHTML=`
       <button class="back" data-go="#/feed">← Feed</button>
       <div class="card" style="padding:0;overflow:hidden">
-        <div class="pcover" style="${(u.banner && (u.banner.url || u.banner.html)) ? "" : "background:" + bannerGrad(u)}">${mediaBox(u.banner, "", "banner")}</div>
+        <div class="pcover" style="${(u.banner && (u.banner.url || u.banner.html)) ? "" : "background:" + bannerGrad(u)}${(u.banner && u.banner.style && u.banner.style.h) ? ";height:" + Math.min(260, Math.max(80, Number(u.banner.style.h) || 112)) + "px" : ""}">${mediaBox(u.banner, "", "banner")}</div>
         <div class="pcard">
           <div class="pmeta">
             <div style="display:flex;align-items:flex-end;gap:12px">
@@ -1989,10 +2028,11 @@ function mediaBox(m, cls, alt){
     return '<iframe' + c + ' sandbox="" scrolling="no" srcdoc="' + esc(m.html) + '"></iframe>';
   }
   if(!m.url) return "";
+  const st = ' style="' + mediaStyleAttr(m) + '"';
   if(m.kind === "video"){
-    return '<video' + c + ' src="' + esc(m.url) + '" autoplay loop muted playsinline></video>';
+    return '<video' + c + ' src="' + esc(m.url) + '" autoplay loop muted playsinline' + st + '></video>';
   }
-  return '<img' + c + ' src="' + esc(m.url) + '" alt="' + esc(alt || "profile") + '" loading="lazy" />';
+  return '<img' + c + ' src="' + esc(m.url) + '" alt="' + esc(alt || "profile") + '" loading="lazy"' + st + ' />';
 }
 function mediaFromUrl(u){
   const s = String(u || "").trim();
@@ -2064,6 +2104,218 @@ function wireMediaSlot(slot){
   };
 }
 
+/* ============================================================
+   PROFILE MEDIA — style (fit / position / zoom / height / shape) + crop
+   ============================================================ */
+const POS_VALUES = ["0% 0%", "50% 0%", "100% 0%", "0% 50%", "50% 50%", "100% 50%", "0% 100%", "50% 100%", "100% 100%"];
+const SHAPES = { circle: "50%", round: "14px", square: "5px" };
+
+function mediaStyleAttr(m){
+  const s = (m && m.style) || {};
+  const fit = s.fit === "contain" ? "contain" : "cover";
+  const pos = POS_VALUES.indexOf(s.pos) >= 0 ? s.pos : "50% 50%";
+  const z = Math.min(3, Math.max(1, Number(s.zoom) || 1));
+  return "object-fit:" + fit + ";object-position:" + pos +
+         (z > 1 ? ";transform:scale(" + z + ");transform-origin:" + pos : "");
+}
+function avatarRadius(m){
+  const sh = (m && m.style && m.style.shape) || "circle";
+  return SHAPES[sh] || SHAPES.circle;
+}
+
+/* ---------- UI → style object ---------- */
+function styleFromUI(slot){
+  const p = slot === "avatar" ? "edAv" : "edBn";
+  const fitEl = document.getElementById(p + "Fit");
+  const posEl = document.getElementById(p + "Pos");
+  const zoomEl = document.getElementById(p + "Zoom");
+  const shapeEl = document.getElementById(p + "Shape");
+  const hEl = document.getElementById(p + "H");
+  const st = {
+    fit: fitEl && fitEl.value === "contain" ? "contain" : "cover",
+    pos: posEl && POS_VALUES.indexOf(posEl.value) >= 0 ? posEl.value : "50% 50%",
+    zoom: zoomEl ? Math.min(3, Math.max(1, (Number(zoomEl.value) || 100) / 100)) : 1
+  };
+  if(shapeEl) st.shape = SHAPES[shapeEl.value] ? shapeEl.value : "circle";
+  if(hEl) st.h = Math.min(260, Math.max(80, Number(hEl.value) || 112));
+  return st;
+}
+function loadStyleToUI(slot, m){
+  const p = slot === "avatar" ? "edAv" : "edBn";
+  const s = (m && m.style) || {};
+  const fitEl = document.getElementById(p + "Fit");
+  const posEl = document.getElementById(p + "Pos");
+  const zoomEl = document.getElementById(p + "Zoom");
+  const shapeEl = document.getElementById(p + "Shape");
+  const hEl = document.getElementById(p + "H");
+  if(fitEl) fitEl.value = s.fit === "contain" ? "contain" : "cover";
+  if(posEl) posEl.value = POS_VALUES.indexOf(s.pos) >= 0 ? s.pos : "50% 50%";
+  if(zoomEl) zoomEl.value = String(Math.round((Number(s.zoom) || 1) * 100));
+  if(shapeEl) shapeEl.value = SHAPES[s.shape] ? s.shape : "circle";
+  if(hEl) hEl.value = String(s.h || 112);
+  const zv = document.getElementById(p + "ZoomV"); if(zv && zoomEl) zv.textContent = zoomEl.value + "%";
+  const hv = document.getElementById(p + "HV"); if(hv && hEl) hv.textContent = hEl.value + "px";
+}
+function currentSlotMedia(slot){
+  if(_ed[slot] !== undefined) return _ed[slot];
+  return (profile && profile[slot]) || null;
+}
+function refreshPreview(slot){
+  const m = currentSlotMedia(slot);
+  const prevEl = document.getElementById(slot === "avatar" ? "edAvPrev" : "edBnPrev");
+  if(prevEl) prevEl.innerHTML = m ? (mediaBox(m, "", "preview") || "—") : "—";
+  if(slot === "avatar" && prevEl){
+    prevEl.style.borderRadius = m ? avatarRadius(m) : "14px";
+  }
+}
+
+/* ---------- crop ---------- */
+const CROP_CFG = { avatar: { w: 512, h: 512, label: "1:1" }, banner: { w: 1200, h: 400, label: "3:1" } };
+let _crop = null;
+
+function cropModal(){
+  let ov = document.getElementById("cropModal");
+  if(ov) return ov;
+  ov = document.createElement("div");
+  ov.id = "cropModal";
+  ov.className = "modal";
+  ov.innerHTML = `
+    <div class="box">
+      <h3 style="margin:0 0 4px">Crop</h3>
+      <div class="pmuted" style="font-size:12px;margin-bottom:10px" id="cropRatio"></div>
+      <div id="cropFrame" style="position:relative;width:100%;overflow:hidden;border-radius:12px;background:#0b0c10;touch-action:none;cursor:grab">
+        <img id="cropImg" alt="crop" style="position:absolute;left:0;top:0;transform-origin:0 0;user-select:none;pointer-events:none;max-width:none" />
+      </div>
+      <label class="f">Zoom</label>
+      <input id="cropZoom" type="range" min="100" max="400" value="100" style="width:100%" />
+      <div class="crow">
+        <button class="btn primary block" id="cropApply" type="button">Crop &amp; save</button>
+        <button class="btn block" id="cropCancel" type="button">Cancel</button>
+      </div>
+      <div class="note">Image ko drag karo, zoom se size set karo.</div>
+    </div>`;
+  document.body.appendChild(ov);
+  return ov;
+}
+
+function openCropper(slot){
+  const m = currentSlotMedia(slot);
+  if(!m || !m.url) return toast("Pehle image lagao, phir crop karo");
+  if(m.kind === "video") return toast("Video crop nahi hota — style se adjust karo");
+  const cfg = CROP_CFG[slot];
+  const ov = cropModal();
+  ov.classList.add("show");
+  const frame = ov.querySelector("#cropFrame");
+  const img = ov.querySelector("#cropImg");
+  const zoom = ov.querySelector("#cropZoom");
+  frame.style.aspectRatio = cfg.w + " / " + cfg.h;
+  ov.querySelector("#cropRatio").textContent = "Aspect " + cfg.label + " · output " + cfg.w + "×" + cfg.h;
+  zoom.value = "100";
+
+  _crop = { slot, img, frame, s0: 1, s: 1, x: 0, y: 0, nw: 0, nh: 0, drag: null };
+
+  img.onload = () => {
+    const W = frame.clientWidth || 300, H = frame.clientHeight || 150;
+    _crop.nw = img.naturalWidth; _crop.nh = img.naturalHeight;
+    _crop.s0 = Math.max(W / _crop.nw, H / _crop.nh);
+    _crop.s = _crop.s0;
+    _crop.x = (W - _crop.nw * _crop.s) / 2;
+    _crop.y = (H - _crop.nh * _crop.s) / 2;
+    paintCrop();
+  };
+  img.onerror = () => toast("Image load nahi hui (CORS ya galat link)");
+  img.crossOrigin = "anonymous";
+  img.src = m.url;
+
+  zoom.oninput = () => {
+    if(!_crop) return;
+    const W = frame.clientWidth, H = frame.clientHeight;
+    const cx = (W / 2 - _crop.x) / _crop.s, cy = (H / 2 - _crop.y) / _crop.s;
+    _crop.s = _crop.s0 * (Number(zoom.value) / 100);
+    _crop.x = W / 2 - cx * _crop.s;
+    _crop.y = H / 2 - cy * _crop.s;
+    clampCrop(); paintCrop();
+  };
+
+  frame.onpointerdown = (e) => {
+    if(!_crop) return;
+    frame.setPointerCapture(e.pointerId);
+    _crop.drag = { x: e.clientX, y: e.clientY, ox: _crop.x, oy: _crop.y };
+    frame.style.cursor = "grabbing";
+  };
+  frame.onpointermove = (e) => {
+    if(!_crop || !_crop.drag) return;
+    _crop.x = _crop.drag.ox + (e.clientX - _crop.drag.x);
+    _crop.y = _crop.drag.oy + (e.clientY - _crop.drag.y);
+    clampCrop(); paintCrop();
+  };
+  frame.onpointerup = () => { if(_crop) _crop.drag = null; frame.style.cursor = "grab"; };
+
+  ov.querySelector("#cropCancel").onclick = () => { ov.classList.remove("show"); _crop = null; };
+  ov.querySelector("#cropApply").onclick = () => applyCrop();
+}
+
+function clampCrop(){
+  const W = _crop.frame.clientWidth, H = _crop.frame.clientHeight;
+  const dw = _crop.nw * _crop.s, dh = _crop.nh * _crop.s;
+  if(dw <= W) _crop.x = (W - dw) / 2; else _crop.x = Math.min(0, Math.max(W - dw, _crop.x));
+  if(dh <= H) _crop.y = (H - dh) / 2; else _crop.y = Math.min(0, Math.max(H - dh, _crop.y));
+}
+function paintCrop(){
+  _crop.img.style.transform = "translate(" + _crop.x + "px," + _crop.y + "px) scale(" + _crop.s + ")";
+}
+
+async function applyCrop(){
+  if(!_crop) return;
+  const cfg = CROP_CFG[_crop.slot];
+  const W = _crop.frame.clientWidth, H = _crop.frame.clientHeight;
+  const sx = -_crop.x / _crop.s, sy = -_crop.y / _crop.s;
+  const sw = W / _crop.s, sh = H / _crop.s;
+  try{
+    const c = document.createElement("canvas");
+    c.width = cfg.w; c.height = cfg.h;
+    c.getContext("2d").drawImage(_crop.img, sx, sy, sw, sh, 0, 0, cfg.w, cfg.h);
+    const blob = await new Promise(res => c.toBlob(res, "image/jpeg", 0.9));
+    if(!blob) throw new Error("canvas empty");
+    toast("Crop upload ho raha hai…");
+    const file = new File([blob], "crop.jpg", { type: "image/jpeg" });
+    const m = await uploadProfileMedia(file, _crop.slot);
+    if(m){
+      m.style = Object.assign({}, styleFromUI(_crop.slot));
+      _ed[_crop.slot] = m;
+      refreshPreview(_crop.slot);
+      toast("Crop lag gaya ✓");
+    }
+    document.getElementById("cropModal").classList.remove("show");
+    _crop = null;
+  }catch(e){
+    diagError("crop_failed", e);
+    toast("Crop fail — dusri image try karo (external link CORS block kar sakta hai)");
+  }
+}
+
+/* ---------- style controls wiring ---------- */
+function wireStyleControls(slot){
+  const p = slot === "avatar" ? "edAv" : "edBn";
+  ["Fit", "Pos", "Zoom", "Shape", "H"].forEach(k => {
+    const el = document.getElementById(p + k);
+    if(!el) return;
+    el.oninput = () => {
+      const zv = document.getElementById(p + "ZoomV");
+      if(zv){ const zi = document.getElementById(p + "Zoom"); if(zi) zv.textContent = zi.value + "%"; }
+      const hv = document.getElementById(p + "HV");
+      if(hv){ const hi = document.getElementById(p + "H"); if(hi) hv.textContent = hi.value + "px"; }
+      const m = currentSlotMedia(slot);
+      if(!m) return;
+      m.style = Object.assign({}, styleFromUI(slot));
+      if(_ed[slot] !== undefined) _ed[slot] = m;
+      refreshPreview(slot);
+    };
+  });
+  const cropBtn = document.getElementById(p + "Crop");
+  if(cropBtn) cropBtn.onclick = () => openCropper(slot);
+}
+
 function openEdit(){
   if(!profile) return;
   document.getElementById("edName").value=profile.name||"";
@@ -2075,9 +2327,10 @@ function openEdit(){
   document.getElementById("edBnUrl").value=(bn && bn.url)?bn.url:"";
   document.getElementById("edBnHtml").value=(bn && bn.kind==="html")?(bn.html||""):"";
   document.getElementById("edTheme").value=(th.accent||th.accent2)?JSON.stringify(th):"";
-  renderMediaPrev(document.getElementById("edAvPrev"), av);
-  renderMediaPrev(document.getElementById("edBnPrev"), bn);
+  loadStyleToUI("avatar", av); loadStyleToUI("banner", bn);
+  refreshPreview("avatar"); refreshPreview("banner");
   wireMediaSlot("avatar"); wireMediaSlot("banner");
+  wireStyleControls("avatar"); wireStyleControls("banner");
   document.getElementById("editModal").classList.add("show");
 }
 document.getElementById("edCancel").onclick=()=>document.getElementById("editModal").classList.remove("show");
@@ -2101,6 +2354,9 @@ document.getElementById("edSave").onclick=async ()=>{
   }
   const bnHtml=(document.getElementById("edBnHtml").value||"").trim();
   if(bnHtml) patch.banner={ kind:"html", html: bnHtml.slice(0,20000) };
+  /* size / style merge */
+  if(patch.avatar && patch.avatar.kind !== "html") patch.avatar = Object.assign({}, patch.avatar, { style: styleFromUI("avatar") });
+  if(patch.banner) patch.banner = Object.assign({}, patch.banner, { style: styleFromUI("banner") });
   const thRaw=(document.getElementById("edTheme").value||"").trim();
   if(thRaw){
     try{
