@@ -8,8 +8,8 @@ android {
         applicationId "uk.merry.pulse"
         minSdk 23
         targetSdk 34
-        versionCode (project.findProperty("vCode") ?: "2").toInteger()
-        versionName (project.findProperty("vName") ?: "1.1.0")
+        versionCode = (project.findProperty("vCode") ?: "2").toInteger()
+        versionName = (project.findProperty("vName") ?: "1.1.0").toString()
     }
 
     buildFeatures { buildConfig true }
