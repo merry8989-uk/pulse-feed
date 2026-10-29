@@ -15,7 +15,7 @@ android {
     buildFeatures { buildConfig true }
 
     def ksPath = System.getenv("PULSE_KEYSTORE") ?: "pulse.keystore"
-    def ksFile = file(ksPath)
+    def ksFile = rootProject.file(ksPath)
 
     signingConfigs {
         release {
