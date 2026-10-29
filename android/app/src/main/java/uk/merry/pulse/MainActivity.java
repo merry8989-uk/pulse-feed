@@ -1,11 +1,13 @@
 package uk.merry.pulse;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.IntentFilter;
 import android.database.Cursor;
 import android.net.Uri;
@@ -17,6 +19,7 @@ import android.os.Looper;
 import android.view.KeyEvent;
 import android.view.ViewGroup;
 import android.webkit.ValueCallback;
+import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -50,6 +53,8 @@ public class MainActivity extends Activity {
     private ProgressBar updateBar;
     private TextView updateText;
     private long downloadId = -1;
+    private PermissionRequest pendingPermRequest;
+    private static final int PERM_REQ = 2001;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -81,6 +86,14 @@ public class MainActivity extends Activity {
         });
 
         web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                runOnUiThread(() -> {
+                    pendingPermRequest = request;
+                    requestPermissions(new String[]{ Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO }, PERM_REQ);
+                });
+            }
+
             @Override
             public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams params) {
                 if (filePathCallback != null) { filePathCallback.onReceiveValue(null); }
@@ -256,6 +269,21 @@ public class MainActivity extends Activity {
     }
 
     /* ---------------- WEBVIEW PLUMBING ---------------- */
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        if (code == PERM_REQ) {
+            boolean ok = true;
+            for (int r : results) { if (r != PackageManager.PERMISSION_GRANTED) ok = false; }
+            if (pendingPermRequest != null) {
+                if (ok) pendingPermRequest.grant(pendingPermRequest.getResources());
+                else pendingPermRequest.deny();
+                pendingPermRequest = null;
+            }
+            return;
+        }
+        super.onRequestPermissionsResult(code, perms, results);
+    }
 
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
