@@ -8,6 +8,9 @@ on:
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,13 +26,51 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build debug APK
-        working-directory: android
-        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Restore signing keystore
+        uses: actions/cache@v4
+        with:
+          path: android/pulse.keystore
+          key: pulse-keystore-v1
 
-      - name: Upload APK
+      - name: Ensure keystore exists
+        working-directory: android
+        run: |
+          if [ ! -f pulse.keystore ]; then
+            keytool -genkeypair -v -keystore pulse.keystore -alias pulse \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass pulsefeed123 -keypass pulsefeed123 \
+              -dname "CN=Pulse, OU=Pulse, O=Pulse, L=Delhi, C=IN"
+          fi
+
+      - name: Build release APK
+        working-directory: android
+        env:
+          PULSE_KEYSTORE: pulse.keystore
+          PULSE_KS_PASS: pulsefeed123
+          PULSE_KEY_ALIAS: pulse
+          PULSE_KEY_PASS: pulsefeed123
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk out/Pulse-1.1.0.apk
+          ls -la out
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: pulse-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: out/*.apk
           retention-days: 30
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.1.${{ github.run_number }}
+          name: Pulse v1.1.${{ github.run_number }}
+          body: |
+            Pulse Android build.
+            - WebView shell for https://merry8989-uk.github.io/pulse-feed/
+            - In-app auto updater (progress bar)
+          files: out/*.apk
