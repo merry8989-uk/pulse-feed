@@ -2319,13 +2319,49 @@ document.addEventListener("click", async (e) => {
 
 /* ============================================================
    PHASE 2 — CALLS (WebRTC over Supabase Realtime)
-   STUN-only. TURN ke bina kuch mobile networks par call fail ho sakti hai.
+   STUN + TURN (Open Relay default) + apna TURN optional.
    ============================================================ */
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }
-  ]
-};
+/* STUN (public) */
+const STUN_SERVERS = [
+  { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }
+];
+/* TURN (relay) — jab dono side ka NAT direct connection nahi banne deta.
+   Default: Open Relay (free public TURN, no account).
+   Apna TURN lagana ho to:
+   localStorage.setItem("pulse_turn", JSON.stringify([{urls:"turn:host:3478",username:"u",credential:"p"}]))
+   (Metered / Cloudflare Calls / Twilio — koi bhi TURN credential chalega) */
+const TURN_SERVERS = [
+  { urls: "turn:openrelay.metered.ca:80",  username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+];
+function customTurn(){
+  try{ const v = JSON.parse(localStorage.getItem("pulse_turn") || "[]"); return Array.isArray(v) ? v : []; }
+  catch(e){ return []; }
+}
+function iceConfig(){
+  return { iceServers: [...STUN_SERVERS, ...TURN_SERVERS, ...customTurn()], iceCandidatePoolSize: 2 };
+}
+/* call connected → P2P tha ya TURN relay? */
+async function reportCallQuality(){
+  try{
+    if(!callState.pc) return;
+    const stats = await callState.pc.getStats();
+    let localType = null, remoteType = null;
+    stats.forEach(r => {
+      if(r.type === "candidate-pair" && r.state === "succeeded" && r.nominated){
+        const l = stats.get(r.localCandidateId), rr = stats.get(r.remoteCandidateId);
+        if(l) localType = l.candidateType;
+        if(rr) remoteType = rr.candidateType;
+      }
+    });
+    const relay = localType === "relay" || remoteType === "relay";
+    dcat("performance", "info", "call_quality", "Call via " + (relay ? "TURN relay" : "direct P2P"),
+      { relay_used: relay, local_candidate: localType, remote_candidate: remoteType });
+    const st = document.getElementById("callStatus");
+    if(st) st.textContent = relay ? "Connected (TURN)" : "Connected (P2P)";
+  }catch(e){}
+}
 
 const callState = {
   pc: null, local: null, chan: null, chatId: null,
@@ -2398,7 +2434,7 @@ function sendSignal(obj){
 }
 
 function makePC(){
-  const pc = new RTCPeerConnection(ICE_SERVERS);
+  const pc = new RTCPeerConnection(iceConfig());
   pc.onicecandidate = e => { if(e.candidate) sendSignal({ kind:"ice", candidate:e.candidate }); };
   pc.ontrack = e => {
     const v = document.getElementById("callRemote");
@@ -2406,9 +2442,13 @@ function makePC(){
   };
   pc.onconnectionstatechange = () => {
     const st = document.getElementById("callStatus");
-    if(!st) return;
     const s = pc.connectionState;
-    st.textContent = s === "connected" ? "Connected" : (s === "connecting" ? "Connecting…" : s);
+    if(s === "connected"){ reportCallQuality(); return; }
+    if(st) st.textContent = s === "connecting" ? "Connecting…" : s;
+    /* network badla / fail hua → ICE restart (caller hi karega) */
+    if(s === "failed" && callState.isCaller && callState.active){
+      try{ pc.restartIce(); }catch(e){}
+    }
   };
   return pc;
 }
