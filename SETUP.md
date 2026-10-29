@@ -138,3 +138,19 @@ Off karna ho to Settings me **Diagnostics OFF** — collect band.
 > Chaaho to GitHub se delete kar do. Tumhare Supabase project me pehle se bana
 > `diag_events` table bhi ab khaali rahega — chaaho to
 > `drop table public.diag_events;` chala do.
+
+---
+
+## Anonymous chat (Phase 1)
+
+1. Supabase → **SQL Editor** → New query → **`chat.sql`** paste → **Run**.
+2. Bas. Header me **💬** icon, ya profile me **"Anonymous chat"** button se khulega.
+
+Kya-kya hai:
+- **Fixed key** (permanent) — ek baar kisi ne use ki, to chat permanent. Sirf banane wala delete kar sakta hai.
+- **Temporary keys** — 10 second se lekar jitna chaho. Time khatam = key + poora chat **dono taraf se delete** (pg_cron har minute cleanup karta hai).
+- Messages **insert-only** — edit ya delete ka koi raasta nahi (RLS me update/delete policy hi nahi).
+- **Koi bhi file**: image, video, audio, PDF, doc, GIF, aur links.
+- Private bucket (`chat_media`) — sirf chat members signed URL se dekh sakte hain.
+
+Baaki phases: HD audio/video calls, groups + temp groups, Android app (auto-updater).
