@@ -49,12 +49,12 @@ jobs:
           PULSE_KS_PASS: pulsefeed123
           PULSE_KEY_ALIAS: pulse
           PULSE_KEY_PASS: pulsefeed123
-        run: gradle assembleRelease --no-daemon --stacktrace
+        run: gradle assembleRelease --no-daemon --stacktrace -PvCode=${{ github.run_number }} -PvName=1.1.${{ github.run_number }}
 
       - name: Rename APK
         run: |
           mkdir -p out
-          cp android/app/build/outputs/apk/release/app-release.apk out/Pulse-1.1.0.apk || cp android/app/build/outputs/apk/release/*.apk out/Pulse-1.1.0.apk
+          cp android/app/build/outputs/apk/release/app-release.apk out/Pulse-1.1.${{ github.run_number }}.apk || cp android/app/build/outputs/apk/release/*.apk out/Pulse-1.1.0.apk
           ls -la out
 
       - name: Upload artifact
