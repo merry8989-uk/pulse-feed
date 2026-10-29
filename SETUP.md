@@ -154,3 +154,31 @@ Kya-kya hai:
 - Private bucket (`chat_media`) — sirf chat members signed URL se dekh sakte hain.
 
 Baaki phases: HD audio/video calls, groups + temp groups, Android app (auto-updater).
+
+### Chat files ka cleanup (Edge Function)
+
+Temp chat expire hone par DB rows (chat + messages) delete hote hain, par Storage me
+padi files reh jaati hain — kyunki SQL storage objects delete nahi kar sakta.
+`chat-gc` function unhe saaf karta hai.
+
+1. **Deploy:** `supabase functions deploy chat-gc`
+   (ya Dashboard → Edge Functions → Create function → naam `chat-gc` → `chat-gc.ts` ka code paste → Deploy)
+2. **Schedule:** Dashboard → Edge Functions → `chat-gc` → **Schedules** → `*/15 * * * *`
+
+`SUPABASE_URL` aur `SUPABASE_SERVICE_ROLE_KEY` automatically milte hain — koi secret
+daalne ki zaroorat nahi.
+
+Ye function sirf un folders ko delete karta hai jinka `chats` row maujood nahi (orphan),
+aur **1 ghante se nayi files ko chhod deta hai** (in-flight upload se race na ho).
+
+---
+
+## Android app
+
+APK GitHub Actions se banti hai (`.github/workflows/android.yml`) — `android/` folder me
+minimal WebView app hai jo live site load karti hai.
+
+- APK: Actions → **Build Pulse APK** → run → artifact **pulse-apk**
+- Install: phone me "unknown apps" allow karke APK kholo.
+- **Note:** abhi **debug-signed** hai. Auto-update ke liye stable release keystore
+  chahiye hoga (Phase 4 me).
