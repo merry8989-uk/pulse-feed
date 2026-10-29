@@ -184,6 +184,9 @@
   .cbtn{width:58px;height:58px;border-radius:50%;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.12);color:#fff;font-size:20px;cursor:pointer}
   .cbtn.off{background:rgba(255,255,255,.05);opacity:.5}
   .cbtn.end{background:#e5484d;border-color:transparent}
+  .callvids{position:absolute;inset:0;display:grid;gap:6px;grid-template-columns:1fr}
+  .callvid{width:100%;height:100%;object-fit:cover;background:#000;display:block}
+  .callcnt{font-size:11px;opacity:.75;margin-left:6px}
   .callin{position:fixed;inset:0;background:rgba(4,5,9,.82);z-index:210;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px)}
   .callinbox{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:26px 22px;text-align:center;max-width:320px;width:86%}
   /* feed skeleton */
@@ -1199,6 +1202,7 @@ async function afterAuth(){
   await ensureProfile();
   render();
   loadFeed();
+  ringChannel();   /* login hote hi global ring subscribe */
 }
 function signOut(){ dinfo("auth_state_change", {outcome:"signout_requested"}); sb.auth.signOut().then(()=>{ user=null; profile=null; toast("Signed out"); go("/feed"); render(); }); }
 
@@ -1284,6 +1288,21 @@ function viewSettings(){
       ${_dbHealth ? `<div class="kv" style="margin-top:10px">${Object.entries(_dbHealth).map(([k,v])=>`<div><span>${esc(k)}</span><b style="color:${v?"var(--green)":"var(--danger)"}">${v?"✓":"✗"}</b></div>`).join("")}</div>` : ""}
       ${_dbHealth && Object.values(_dbHealth).some(v=>!v) ? `<div class="note">Kuch missing hai — <b>SETUP-ALL.sql</b> Supabase SQL Editor me paste karke Run karo, phir dobara check karo.</div>` : ""}
       <button class="btn block" style="margin-top:12px" data-act="db-check">Check database</button>
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:6px">Calls — TURN server</div>
+      <div class="pmuted" style="font-size:13px">Default: public relay (Open Relay). Apna TURN lagao to calls zyada reliable hongi — Metered / Cloudflare Calls / Twilio ka free tier chalega.</div>
+      <label class="f">TURN URL</label>
+      <input id="turnUrl" placeholder="turn:host:3478  ya  turns:host:5349" value="${esc((customTurn()[0]||{}).urls||"")}" />
+      <label class="f">Username</label>
+      <input id="turnUser" value="${esc((customTurn()[0]||{}).username||"")}" />
+      <label class="f">Credential</label>
+      <input id="turnPass" value="${esc((customTurn()[0]||{}).credential||"")}" />
+      <div class="mbtns">
+        <button class="btn sm primary" data-act="turn-save">Save TURN</button>
+        <button class="btn sm ghost" data-act="turn-reset">Reset to default</button>
+      </div>
+      <div class="pmuted" style="font-size:12px;margin-top:8px">${customTurn().length ? "Abhi: tumhara custom TURN" : "Abhi: default public relay"}</div>
     </div>
     <div class="card">
       <div style="font-weight:700;margin-bottom:6px">About</div>
@@ -1908,6 +1927,16 @@ document.addEventListener("click", async (e)=>{
   if(act==="diag-filter"){ diag.filter=actEl.getAttribute("data-level")||"all"; return render(); }
   if(act==="diag-cat"){ diag.catFilter=actEl.getAttribute("data-cat")||"all"; return render(); }
   if(act==="db-check"){ toast("Check kar raha hoon…"); await dbHealthCheck(); return render(); }
+  if(act==="turn-save"){
+    const u=(document.getElementById("turnUrl").value||"").trim();
+    const un=(document.getElementById("turnUser").value||"").trim();
+    const pw=(document.getElementById("turnPass").value||"").trim();
+    if(!u) return toast("TURN URL daalo");
+    const one={ urls:u }; if(un) one.username=un; if(pw) one.credential=pw;
+    localStorage.setItem("pulse_turn", JSON.stringify([one]));
+    toast("TURN save ho gaya ✓"); return render();
+  }
+  if(act==="turn-reset"){ localStorage.removeItem("pulse_turn"); toast("Default TURN par wapas"); return render(); }
   if(act==="diag-crash-copy"){
     const rep=JSON.stringify({ analytics:analyticsSummary(), crashes:crashSummary(), recent_logs:diag.logs.slice(-40) }, null, 2);
     try{ await navigator.clipboard.writeText(rep); toast("Crash report copy ho gaya 📋"); }catch(e){ toast("Copy fail"); }
@@ -2774,19 +2803,15 @@ document.addEventListener("click", async (e) => {
 
 
 /* ============================================================
-   PHASE 2 — CALLS (WebRTC over Supabase Realtime)
-   STUN + TURN (Open Relay default) + apna TURN optional.
+   CALLS v2 — mesh group calls + global ring + ringtone
+   - 1:1 aur group dono (har peer ke saath alag RTCPeerConnection)
+   - ring apni personal channel pe aati hai → chat khuli ho ya na ho
+   - STUN + TURN (custom TURN Settings se set hota hai)
    ============================================================ */
-/* STUN (public) */
 const STUN_SERVERS = [
   { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }
 ];
-/* TURN (relay) — jab dono side ka NAT direct connection nahi banne deta.
-   Default: Open Relay (free public TURN, no account).
-   Apna TURN lagana ho to:
-   localStorage.setItem("pulse_turn", JSON.stringify([{urls:"turn:host:3478",username:"u",credential:"p"}]))
-   (Metered / Cloudflare Calls / Twilio — koi bhi TURN credential chalega) */
-const TURN_SERVERS = [
+const DEFAULT_TURN = [
   { urls: "turn:openrelay.metered.ca:80",  username: "openrelayproject", credential: "openrelayproject" },
   { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
   { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
@@ -2795,53 +2820,68 @@ function customTurn(){
   try{ const v = JSON.parse(localStorage.getItem("pulse_turn") || "[]"); return Array.isArray(v) ? v : []; }
   catch(e){ return []; }
 }
+function turnServers(){ const c = customTurn(); return c.length ? c : DEFAULT_TURN; }
 function iceConfig(){
-  return { iceServers: [...STUN_SERVERS, ...TURN_SERVERS, ...customTurn()], iceCandidatePoolSize: 2 };
-}
-/* call connected → P2P tha ya TURN relay? */
-async function reportCallQuality(){
-  try{
-    if(!callState.pc) return;
-    const stats = await callState.pc.getStats();
-    let localType = null, remoteType = null;
-    stats.forEach(r => {
-      if(r.type === "candidate-pair" && r.state === "succeeded" && r.nominated){
-        const l = stats.get(r.localCandidateId), rr = stats.get(r.remoteCandidateId);
-        if(l) localType = l.candidateType;
-        if(rr) remoteType = rr.candidateType;
-      }
-    });
-    const relay = localType === "relay" || remoteType === "relay";
-    dcat("performance", "info", "call_quality", "Call via " + (relay ? "TURN relay" : "direct P2P"),
-      { relay_used: relay, local_candidate: localType, remote_candidate: remoteType });
-    const st = document.getElementById("callStatus");
-    if(st) st.textContent = relay ? "Connected (TURN)" : "Connected (P2P)";
-  }catch(e){}
+  return { iceServers: [...STUN_SERVERS, ...turnServers()], iceCandidatePoolSize: 2 };
 }
 
 const callState = {
-  pc: null, local: null, chan: null, chatId: null,
+  peers: new Map(),        /* userId -> { pc, videoEl } */
+  local: null,
+  chan: null, ringChan: null,
+  chatId: null, callId: null,
   video: false, active: false, isCaller: false,
-  remoteSet: false, pendingCand: [], pendingOffer: null
+  pending: new Map(),      /* userId -> [candidates] */
+  remoteSet: new Map(),    /* userId -> bool */
+  seen: new Set()          /* ring dedupe */
 };
 
+/* ---------- ringtone ---------- */
+let _ringTimer = null, _ringCtx = null;
+function startRingtone(){
+  try{
+    stopRingtone();
+    _ringCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const beep = () => {
+      if(!_ringCtx) return;
+      const t = _ringCtx.currentTime;
+      const o = _ringCtx.createOscillator(), g = _ringCtx.createGain();
+      o.type = "sine"; o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.18, t + 0.06);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+      o.connect(g); g.connect(_ringCtx.destination);
+      o.start(t); o.stop(t + 0.55);
+    };
+    beep();
+    _ringTimer = setInterval(beep, 1300);
+    if(navigator.vibrate) navigator.vibrate([400, 300, 400, 300]);
+  }catch(e){}
+}
+function stopRingtone(){
+  clearInterval(_ringTimer); _ringTimer = null;
+  try{ if(_ringCtx) _ringCtx.close(); }catch(e){}
+  _ringCtx = null;
+  try{ if(navigator.vibrate) navigator.vibrate(0); }catch(e){}
+}
+
+/* ---------- overlay ---------- */
 function callOverlay(){
   let ov = document.getElementById("callOverlay");
   if(ov) return ov;
   ov = document.createElement("div");
-  ov.id = "callOverlay";
-  ov.className = "callov";
+  ov.id = "callOverlay"; ov.className = "callov";
   ov.innerHTML = `
-    <video id="callRemote" autoplay playsinline></video>
+    <div id="callVideos" class="callvids"></div>
     <video id="callLocal" autoplay playsinline muted></video>
-    <div class="calltop"><span id="callStatus">Connecting…</span></div>
+    <div class="calltop"><span id="callStatus">Connecting…</span> <span id="callCount" class="callcnt"></span></div>
     <div class="callbar">
       <button class="cbtn" id="callMute" aria-label="Mute">🎤</button>
       <button class="cbtn" id="callCam" aria-label="Camera">🎥</button>
-      <button class="cbtn end" id="callEnd" aria-label="End call">✕</button>
+      <button class="cbtn end" id="callEnd" aria-label="End">✕</button>
     </div>`;
   document.body.appendChild(ov);
-  ov.querySelector("#callEnd").onclick = () => { endCall(true); };
+  ov.querySelector("#callEnd").onclick = () => endCall(true);
   ov.querySelector("#callMute").onclick = () => {
     const a = callState.local && callState.local.getAudioTracks()[0];
     if(!a) return;
@@ -2856,8 +2896,29 @@ function callOverlay(){
   };
   return ov;
 }
-
-function showCallUI(isCaller, video){
+function callVideoEl(userId){
+  const box = document.getElementById("callVideos");
+  if(!box) return null;
+  let v = box.querySelector('[data-vid="' + userId + '"]');
+  if(!v){
+    v = document.createElement("video");
+    v.dataset.vid = userId;
+    v.autoplay = true; v.playsInline = true;
+    v.className = "callvid";
+    box.appendChild(v);
+    layoutVideos();
+  }
+  return v;
+}
+function layoutVideos(){
+  const box = document.getElementById("callVideos");
+  if(!box) return;
+  const n = box.children.length;
+  box.style.gridTemplateColumns = n <= 1 ? "1fr" : "1fr 1fr";
+  const c = document.getElementById("callCount");
+  if(c) c.textContent = n > 1 ? "(" + (n + 1) + " log)" : "";
+}
+function showCallUI(video){
   const ov = callOverlay();
   ov.classList.add("show");
   const lv = ov.querySelector("#callLocal");
@@ -2865,56 +2926,106 @@ function showCallUI(isCaller, video){
   const cam = ov.querySelector("#callCam");
   if(cam) cam.style.display = video ? "" : "none";
   const st = ov.querySelector("#callStatus");
-  if(st) st.textContent = isCaller ? "Ringing…" : "Connecting…";
+  if(st) st.textContent = callState.isCaller ? "Ringing…" : "Connecting…";
 }
+function setStatus(t){ const s = document.getElementById("callStatus"); if(s) s.textContent = t; }
 
+/* ---------- channels ---------- */
 function callChannel(chatId){
   if(callState.chan && callState.chatId === chatId) return callState.chan;
-  try{
-    if(callState.chan) sb.removeChannel(callState.chan);
-  }catch(e){}
+  try{ if(callState.chan) sb.removeChannel(callState.chan); }catch(e){}
   const ch = sb.channel("call:" + chatId, { config: { broadcast: { self: false } } });
   ch.on("broadcast", { event: "call" }, ({ payload }) => onCallSignal(payload));
   ch.subscribe();
-  callState.chan = ch;
-  callState.chatId = chatId;
+  callState.chan = ch; callState.chatId = chatId;
   return ch;
 }
-
-function sendSignal(obj){
-  if(!callState.chan || !user) return;
-  callState.chan.send({
-    type: "broadcast", event: "call",
-    payload: Object.assign({ from: user.id, at: Date.now() }, obj)
-  });
+function ringChannel(){
+  if(!user) return null;
+  if(callState.ringChan) return callState.ringChan;
+  const ch = sb.channel("ring:" + user.id, { config: { broadcast: { self: false } } });
+  ch.on("broadcast", { event: "ring" }, ({ payload }) => handleRing(payload));
+  ch.subscribe();
+  callState.ringChan = ch;
+  return ch;
+}
+function sendSignal(obj, to){
+  if(!callState.chan) return;
+  callState.chan.send({ type:"broadcast", event:"call",
+    payload: Object.assign({ from: user.id, to: to || null, callId: callState.callId, at: Date.now() }, obj) });
+}
+function sendRing(toUserId, chatId, video){
+  try{
+    const ch = sb.channel("ring:" + toUserId, { config: { broadcast: { self: false } } });
+    ch.subscribe((st) => {
+      if(st === "SUBSCRIBED"){
+        ch.send({ type:"broadcast", event:"ring",
+          payload:{ from: user.id, chatId, video:!!video, callId: callState.callId, at: Date.now() } });
+        setTimeout(() => { try{ sb.removeChannel(ch); }catch(e){} }, 1500);
+      }
+    });
+  }catch(e){}
 }
 
-function makePC(){
+/* ---------- peer management ---------- */
+function newPeer(userId){
   const pc = new RTCPeerConnection(iceConfig());
-  pc.onicecandidate = e => { if(e.candidate) sendSignal({ kind:"ice", candidate:e.candidate }); };
+  const el = callVideoEl(userId);
+  callState.pending.set(userId, []);
+  callState.remoteSet.set(userId, false);
+
+  pc.onicecandidate = e => { if(e.candidate) sendSignal({ kind:"ice", candidate:e.candidate }, userId); };
   pc.ontrack = e => {
-    const v = document.getElementById("callRemote");
+    const v = callVideoEl(userId);
     if(v && e.streams && e.streams[0]){
       v.srcObject = e.streams[0];
-      /* autoplay policy: user gesture ke baad bhi play() explicit zaroori */
-      const p = v.play();
-      if(p && p.catch) p.catch(() => {});
+      const p = v.play(); if(p && p.catch) p.catch(() => {});
     }
   };
   pc.onconnectionstatechange = () => {
-    const st = document.getElementById("callStatus");
-    const s = pc.connectionState;
-    if(s === "connected"){ reportCallQuality(); return; }
-    if(st) st.textContent = s === "connecting" ? "Connecting…" : s;
-    /* network badla / fail hua → ICE restart (caller hi karega) */
-    if(s === "failed" && callState.active){
-      if(callState.isCaller){ try{ pc.restartIce(); }catch(e){} }
-      const st2 = document.getElementById("callStatus");
-      if(st2) st2.textContent = "Connection fail — network/TURN check karo";
-      dcat("performance", "warn", "call_failed", "Call connection failed", { relay_config: TURN_SERVERS.length });
+    if(pc.connectionState === "connected"){ setStatus("Connected"); reportCallQuality(); }
+    if(pc.connectionState === "failed"){
+      try{ pc.restartIce(); }catch(e){}
+      setStatus("Connection fail — network/TURN check karo");
     }
   };
+  if(callState.local) callState.local.getTracks().forEach(t => pc.addTrack(t, callState.local));
+  callState.peers.set(userId, { pc, el });
   return pc;
+}
+function dropPeer(userId){
+  const p = callState.peers.get(userId);
+  if(p){ try{ p.pc.close(); }catch(e){} if(p.el) p.el.remove(); }
+  callState.peers.delete(userId);
+  callState.pending.delete(userId);
+  callState.remoteSet.delete(userId);
+  layoutVideos();
+}
+
+async function reportCallQuality(){
+  try{
+    for(const [uid, p] of callState.peers){
+      const stats = await p.pc.getStats();
+      let localType = null;
+      stats.forEach(r => {
+        if(r.type === "candidate-pair" && r.state === "succeeded" && r.nominated){
+          const l = stats.get(r.localCandidateId); if(l) localType = l.candidateType;
+        }
+      });
+      dcat("performance", "info", "call_quality", "Peer " + (localType === "relay" ? "TURN" : "P2P"),
+        { relay_used: localType === "relay", local_candidate: localType, peers: callState.peers.size });
+      if(localType === "relay") setStatus("Connected (TURN)");
+      break;
+    }
+  }catch(e){}
+}
+
+/* ---------- start / accept / end ---------- */
+async function peerIdsFor(chatId){
+  try{
+    const { data } = await sb.from("chat_members").select("user_id").eq("chat_id", chatId);
+    return (data || []).map(r => r.user_id).filter(id => id !== user.id);
+  }catch(e){ return []; }
 }
 
 async function startCall(chatId, video){
@@ -2929,30 +3040,89 @@ async function startCall(chatId, video){
   callState.video = !!video;
   callState.active = true;
   callState.isCaller = true;
-  callState.remoteSet = false;
-  callState.pendingCand = [];
-  callState.pc = makePC();
-  callState.local.getTracks().forEach(t => callState.pc.addTrack(t, callState.local));
+  callState.callId = "c_" + Math.random().toString(36).slice(2, 10);
+  callState.peers.clear(); callState.pending.clear(); callState.remoteSet.clear();
 
   callChannel(chatId);
-  showCallUI(true, !!video);
+  ringChannel();
+  showCallUI(!!video);
 
+  const peers = await peerIdsFor(chatId);
+  peers.forEach(pid => sendRing(pid, chatId, video));
+  sendSignal({ kind:"ring", video:!!video });   /* jo log chat me hain unko bhi */
+  setStatus("Ringing…");
+  dAct("call_started", "Call shuru ki", { chat_id: chatId, video: !!video, peers: peers.length });
+}
+
+async function acceptCall(){
+  const p = callState.pendingRing;
+  hideIncoming();
+  stopRingtone();
+  if(!p) return;
   try{
-    const offer = await callState.pc.createOffer();
-    await callState.pc.setLocalDescription(offer);
-    sendSignal({ kind:"ring", video:!!video });
-    sendSignal({ kind:"offer", sdp: callState.pc.localDescription });
-  }catch(e){ toast("Call setup fail"); endCall(false); return; }
+    callState.local = await navigator.mediaDevices.getUserMedia({
+      audio: true, video: p.video ? { width:{ideal:1280}, height:{ideal:720} } : false
+    });
+  }catch(e){ return toast("Mic/camera permission nahi mili"); }
 
-  dAct("call_started", "Call shuru ki", { chat_id:chatId, video:!!video });
+  callState.active = true;
+  callState.isCaller = false;
+  callState.video = !!p.video;
+  callState.callId = p.callId;
+  callState.pendingRing = null;
+
+  callChannel(p.chatId);
+  ringChannel();
+  showCallUI(!!p.video);
+  sendSignal({ kind:"join", video:!!p.video });
+  setStatus("Connecting…");
+  dAct("call_accepted", "Call accept ki", { video: !!p.video });
+
+  if(location.hash !== "#/chat/" + p.chatId) go("/chat/" + p.chatId);
+}
+
+function endCall(send){
+  if(send && callState.active) sendSignal({ kind:"end" });
+  for(const uid of [...callState.peers.keys()]) dropPeer(uid);
+  try{ if(callState.local) callState.local.getTracks().forEach(t => t.stop()); }catch(e){}
+  callState.local = null;
+  callState.active = false;
+  callState.callId = null;
+  callState.pendingRing = null;
+  stopRingtone();
+  const ov = document.getElementById("callOverlay");
+  if(ov) ov.remove();
+  hideIncoming();
+  dAct("call_ended", "Call khatam", {});
+}
+
+/* ---------- incoming ---------- */
+function handleRing(p){
+  if(!p || !user || p.from === user.id) return;
+  if(p.busy){ toast("Doosra user abhi call pe hai"); endCall(false); return; }
+  if(p.callId && callState.seen.has(p.callId)) return;
+  if(p.callId) callState.seen.add(p.callId);
+  if(callState.active){
+    try{
+      const ch = sb.channel("ring:" + p.from, { config:{ broadcast:{ self:false } } });
+      ch.subscribe(st => { if(st === "SUBSCRIBED"){
+        ch.send({ type:"broadcast", event:"ring", payload:{ from:user.id, busy:true, callId:p.callId } });
+        setTimeout(() => { try{ sb.removeChannel(ch); }catch(e){} }, 1200);
+      }});
+    }catch(e){}
+    return;
+  }
+  callState.pendingRing = p;
+  callState.video = !!p.video;
+  showIncoming(p);
+  startRingtone();
 }
 
 function showIncoming(p){
   let ov = document.getElementById("callIncoming");
   if(!ov){
     ov = document.createElement("div");
-    ov.id = "callIncoming";
-    ov.className = "callin";
+    ov.id = "callIncoming"; ov.className = "callin";
     document.body.appendChild(ov);
   }
   ov.innerHTML = `<div class="callinbox">
@@ -2965,115 +3135,84 @@ function showIncoming(p){
       </div>
     </div>`;
   ov.style.display = "flex";
-  ov.querySelector("#callReject").onclick = () => { sendSignal({ kind:"end" }); hideIncoming(); };
+  ov.querySelector("#callReject").onclick = () => { sendSignal({ kind:"end" }); hideIncoming(); stopRingtone(); };
   ov.querySelector("#callAccept").onclick = () => acceptCall();
 }
 function hideIncoming(){
   const ov = document.getElementById("callIncoming");
   if(ov) ov.remove();
+  stopRingtone();
 }
 
-async function acceptCall(){
-  hideIncoming();
-  try{
-    callState.local = await navigator.mediaDevices.getUserMedia({
-      audio: true, video: callState.video ? { width:{ideal:1280}, height:{ideal:720} } : false
-    });
-  }catch(e){ return toast("Mic/camera permission nahi mili"); }
-  callState.active = true;
-  callState.isCaller = false;
-  callState.pc = makePC();
-  callState.local.getTracks().forEach(t => callState.pc.addTrack(t, callState.local));
-  showCallUI(false, callState.video);
-
-  if(callState.pendingOffer){
-    const sdp = callState.pendingOffer;
-    callState.pendingOffer = null;
-    await applyOffer(sdp);
-  } else {
-    sendSignal({ kind:"need-offer" });
-  }
-  dAct("call_accepted", "Call accept ki", { video:callState.video });
-}
-
-async function applyOffer(sdp){
-  try{
-    await callState.pc.setRemoteDescription(new RTCSessionDescription(sdp));
-    callState.remoteSet = true;
-    for(const c of callState.pendingCand){ try{ await callState.pc.addIceCandidate(c); }catch(e){} }
-    callState.pendingCand = [];
-    const ans = await callState.pc.createAnswer();
-    await callState.pc.setLocalDescription(ans);
-    sendSignal({ kind:"answer", sdp: callState.pc.localDescription });
-  }catch(e){ toast("Call connect nahi hui"); endCall(true); }
-}
-
+/* ---------- signalling ---------- */
 async function onCallSignal(p){
   if(!p || !user || p.from === user.id) return;
+  if(p.to && p.to !== user.id) return;
+  if(p.callId && callState.callId && p.callId !== callState.callId && p.kind !== "ring") return;
 
-  if(p.kind === "ring"){
-    if(callState.active){ sendSignal({ kind:"busy" }); return; }  /* caller ko batao */
-    callState.video = !!p.video;
-    callState.isCaller = false;
-    showIncoming(p);
+  if(p.kind === "ring"){ handleRing(p); return; }
+
+  if(p.kind === "join"){
+    if(!callState.active) return;
+    /* naya member aaya → usko offer bhejo */
+    const pc = callState.peers.get(p.from) ? callState.peers.get(p.from).pc : newPeer(p.from);
+    try{
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      sendSignal({ kind:"offer", sdp: pc.localDescription }, p.from);
+    }catch(e){}
     return;
   }
-  if(p.kind === "busy"){
-    toast("Doosra user abhi call pe hai");
-    endCall(false);
-    return;
-  }
+
   if(p.kind === "offer"){
-    if(!callState.active){ callState.pendingOffer = p.sdp; return; }
-    if(!callState.isCaller) await applyOffer(p.sdp);
+    if(!callState.active) return;
+    const pc = callState.peers.get(p.from) ? callState.peers.get(p.from).pc : newPeer(p.from);
+    try{
+      await pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
+      callState.remoteSet.set(p.from, true);
+      const buffered = callState.pending.get(p.from) || [];
+      for(const c of buffered){ try{ await pc.addIceCandidate(new RTCIceCandidate(c)); }catch(e){} }
+      callState.pending.set(p.from, []);
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription(ans);
+      sendSignal({ kind:"answer", sdp: pc.localDescription }, p.from);
+    }catch(e){}
     return;
   }
-  if(p.kind === "need-offer"){
-    if(callState.isCaller && callState.pc && callState.pc.localDescription){
-      sendSignal({ kind:"offer", sdp: callState.pc.localDescription });
-    }
-    return;
-  }
-  if(p.kind === "answer"){
-    if(callState.isCaller && callState.pc){
-      try{
-        await callState.pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
-        callState.remoteSet = true;
-        for(const c of callState.pendingCand){ try{ await callState.pc.addIceCandidate(c); }catch(e){} }
-        callState.pendingCand = [];
-      }catch(e){}
-    }
-    return;
-  }
-  if(p.kind === "ice"){
-    if(callState.pc && callState.remoteSet){
-      try{ await callState.pc.addIceCandidate(new RTCIceCandidate(p.candidate)); }catch(e){}
-    } else {
-      callState.pendingCand.push(p.candidate);
-    }
-    return;
-  }
-  if(p.kind === "end"){
-    if(callState.active){ endCall(false); toast("Call khatam ho gayi"); }
-    else hideIncoming();
-    return;
-  }
-}
 
-function endCall(send){
-  if(send) sendSignal({ kind:"end" });
-  try{ if(callState.pc) callState.pc.close(); }catch(e){}
-  try{ if(callState.local) callState.local.getTracks().forEach(t => t.stop()); }catch(e){}
-  callState.pc = null;
-  callState.local = null;
-  callState.active = false;
-  callState.remoteSet = false;
-  callState.pendingCand = [];
-  callState.pendingOffer = null;
-  const ov = document.getElementById("callOverlay");
-  if(ov) ov.remove();
-  hideIncoming();
-  dAct("call_ended", "Call khatam", {});
+  if(p.kind === "answer"){
+    const entry = callState.peers.get(p.from);
+    if(!entry) return;
+    try{
+      await entry.pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
+      callState.remoteSet.set(p.from, true);
+      const buffered = callState.pending.get(p.from) || [];
+      for(const c of buffered){ try{ await entry.pc.addIceCandidate(new RTCIceCandidate(c)); }catch(e){} }
+      callState.pending.set(p.from, []);
+    }catch(e){}
+    return;
+  }
+
+  if(p.kind === "ice"){
+    const entry = callState.peers.get(p.from);
+    if(entry && callState.remoteSet.get(p.from)){
+      try{ await entry.pc.addIceCandidate(new RTCIceCandidate(p.candidate)); }catch(e){}
+    } else {
+      const arr = callState.pending.get(p.from) || [];
+      arr.push(p.candidate); callState.pending.set(p.from, arr);
+    }
+    return;
+  }
+
+  if(p.kind === "end"){
+    if(callState.active){
+      dropPeer(p.from);
+      if(callState.peers.size === 0){ endCall(false); toast("Call khatam ho gayi"); }
+    } else {
+      hideIncoming();
+    }
+    return;
+  }
 }
 
 /* ============================================================
@@ -3129,6 +3268,7 @@ async function joinGroupByKey(k){
   if(user) await setUserHash(user.id);
   render();
   loadFeed();          /* logged-out visitors ko bhi public feed dikhna chahiye */
+  if(user) ringChannel();   /* global ring — chat khuli ho ya na ho */
   capturePermissions();
   sb.auth.onAuthStateChange(async (event, s)=>{
     dinfo("auth_state_change", { outcome:"event", auth_event:event });
