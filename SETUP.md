@@ -182,3 +182,22 @@ minimal WebView app hai jo live site load karti hai.
 - Install: phone me "unknown apps" allow karke APK kholo.
 - **Note:** abhi **debug-signed** hai. Auto-update ke liye stable release keystore
   chahiye hoga (Phase 4 me).
+
+### TURN server (calls reliable karne ke liye)
+
+Default me **Open Relay** ka free public TURN lagaya hua hai (koi account nahi chahiye).
+Isse strict mobile NAT pe bhi call connect ho jaati hai.
+
+Apna TURN lagana ho (recommended for production — Metered / Cloudflare Calls / Twilio):
+
+```js
+// browser console me ek baar:
+localStorage.setItem("pulse_turn", JSON.stringify([
+  { urls: "turn:your-host:3478", username: "user", credential: "pass" },
+  { urls: "turns:your-host:5349", username: "user", credential: "pass" }
+]));
+```
+
+Call connect hone par Diagnostics me `call_quality` event aata hai —
+`relay_used: true` matlab TURN use hua, `false` matlab direct P2P.
+Call UI me bhi "Connected (TURN)" ya "Connected (P2P)" dikhta hai.
