@@ -2894,7 +2894,12 @@ function makePC(){
   pc.onicecandidate = e => { if(e.candidate) sendSignal({ kind:"ice", candidate:e.candidate }); };
   pc.ontrack = e => {
     const v = document.getElementById("callRemote");
-    if(v && e.streams && e.streams[0]) v.srcObject = e.streams[0];
+    if(v && e.streams && e.streams[0]){
+      v.srcObject = e.streams[0];
+      /* autoplay policy: user gesture ke baad bhi play() explicit zaroori */
+      const p = v.play();
+      if(p && p.catch) p.catch(() => {});
+    }
   };
   pc.onconnectionstatechange = () => {
     const st = document.getElementById("callStatus");
@@ -2902,8 +2907,11 @@ function makePC(){
     if(s === "connected"){ reportCallQuality(); return; }
     if(st) st.textContent = s === "connecting" ? "Connecting…" : s;
     /* network badla / fail hua → ICE restart (caller hi karega) */
-    if(s === "failed" && callState.isCaller && callState.active){
-      try{ pc.restartIce(); }catch(e){}
+    if(s === "failed" && callState.active){
+      if(callState.isCaller){ try{ pc.restartIce(); }catch(e){} }
+      const st2 = document.getElementById("callStatus");
+      if(st2) st2.textContent = "Connection fail — network/TURN check karo";
+      dcat("performance", "warn", "call_failed", "Call connection failed", { relay_config: TURN_SERVERS.length });
     }
   };
   return pc;
@@ -3004,10 +3012,15 @@ async function onCallSignal(p){
   if(!p || !user || p.from === user.id) return;
 
   if(p.kind === "ring"){
-    if(callState.active) return; /* busy */
+    if(callState.active){ sendSignal({ kind:"busy" }); return; }  /* caller ko batao */
     callState.video = !!p.video;
     callState.isCaller = false;
     showIncoming(p);
+    return;
+  }
+  if(p.kind === "busy"){
+    toast("Doosra user abhi call pe hai");
+    endCall(false);
     return;
   }
   if(p.kind === "offer"){
