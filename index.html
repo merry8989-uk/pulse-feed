@@ -152,6 +152,18 @@
   .cfile{display:inline-block;margin-top:6px;font-size:13px;text-decoration:underline}
   .chatinput{display:flex;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--border)}
   .chatinput input[type=text],.chatinput #chatText{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:10px 14px;color:var(--text);font:inherit;font-size:14.5px}
+  /* calls */
+  .callov{position:fixed;inset:0;background:#07080c;z-index:200;display:none;flex-direction:column}
+  .callov.show{display:flex}
+  .callov #callRemote{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+  .callov #callLocal{position:absolute;right:14px;bottom:96px;width:104px;height:150px;object-fit:cover;border-radius:14px;border:1px solid rgba(255,255,255,.25);background:#111;z-index:2}
+  .calltop{position:absolute;top:0;left:0;right:0;padding:16px;text-align:center;color:#fff;font-size:13px;z-index:2;background:linear-gradient(180deg,rgba(0,0,0,.6),transparent)}
+  .callbar{position:absolute;bottom:0;left:0;right:0;display:flex;gap:14px;justify-content:center;padding:22px;z-index:2;background:linear-gradient(0deg,rgba(0,0,0,.6),transparent)}
+  .cbtn{width:58px;height:58px;border-radius:50%;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.12);color:#fff;font-size:20px;cursor:pointer}
+  .cbtn.off{background:rgba(255,255,255,.05);opacity:.5}
+  .cbtn.end{background:#e5484d;border-color:transparent}
+  .callin{position:fixed;inset:0;background:rgba(4,5,9,.82);z-index:210;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px)}
+  .callinbox{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:26px 22px;text-align:center;max-width:320px;width:86%}
   /* feed skeleton */
   .skel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:14px 0}
   .skel .srow{display:flex;gap:11px;align-items:center;margin-bottom:12px}
@@ -2070,6 +2082,20 @@ async function renderChatHome(){
       </div>
 
       <div class="card">
+        <div style="font-weight:700;margin-bottom:4px">👥 Group banao</div>
+        <div class="pmuted" style="font-size:13px">Group key se log join karenge. Temp group ka time khatam = group delete.</div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input id="grpTitle" placeholder="Group ka naam" maxlength="60"
+            style="flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text);font:inherit" />
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button class="chip" data-act="group-create" data-sec="0">Permanent</button>
+          <button class="chip" data-act="group-create" data-sec="3600">1 hour</button>
+          <button class="chip" data-act="group-create" data-sec="86400">24 hour</button>
+        </div>
+      </div>
+
+      <div class="card">
         <div style="font-weight:700;margin-bottom:8px">Tumhari chats (${chats.length})</div>
         ${chats.length ? chats.map(c => `
           <button class="chatrow" data-go="#/chat/${c.id}">
@@ -2105,8 +2131,11 @@ async function renderChatRoom(id){
       <div style="font-weight:700">${ch.kind === "group" ? esc(ch.title || "Group") : "Anonymous chat"}</div>
       <div style="flex:1"></div>
       <div class="pmuted" style="font-size:12px">${ch.expires_at ? "⏳ " + timeLeft(ch.expires_at) : "🔒 permanent"}</div>
+      <button class="btn sm ghost" data-act="call-audio" data-id="${ch.id}" aria-label="Audio call" title="Audio call">📞</button>
+      <button class="btn sm ghost" data-act="call-video" data-id="${ch.id}" aria-label="Video call" title="Video call">🎥</button>
       ${ch.created_by === user.id ? `<button class="btn sm ghost" data-act="chat-delete" data-id="${ch.id}" title="Delete chat" aria-label="Delete chat">🗑️</button>` : ""}
     </div>
+    <div id="groupKeyWrap"></div>
     <div class="card" style="padding:0;overflow:hidden">
       <div id="chatMsgs" class="chatmsgs"></div>
       <div class="chatinput">
@@ -2195,6 +2224,18 @@ async function sendChatFile(chatId, file){
 
 function wireChatRoom(ch){
   const id = ch.id;
+  callChannel(id);   /* incoming calls receive karne ke liye */
+  if(ch.kind === "group" && ch.created_by === user.id){
+    sb.from("chat_keys").select("key").eq("chat_id", id).eq("kind", "group").limit(1).maybeSingle()
+      .then(({ data }) => {
+        const w = document.getElementById("groupKeyWrap");
+        if(w && data && data.key){
+          w.innerHTML = `<div class="card"><div style="font-weight:600;font-size:13px;margin-bottom:6px">Group key — isse log join karenge</div>
+            <div class="keybox"><span class="keytxt">${esc(data.key)}</span>
+            <button class="btn sm" data-act="chat-copy-key" data-key="${esc(data.key)}">Copy</button></div></div>`;
+        }
+      });
+  }
   loadChatMessages(id);
   const inp = document.getElementById("chatText");
   if(inp){
@@ -2227,6 +2268,8 @@ async function joinChatByKey(){
   const inp = document.getElementById("joinKey");
   const k = ((inp && inp.value) || "").trim().toUpperCase();
   if(!k) return toast("Key daalo");
+  const grp = await joinGroupByKey(k);
+  if(grp){ dAct("group_joined", "Group join kiya", { chat_id:grp.chat_id }); return go("/chat/" + grp.chat_id); }
   const { data, error } = await sb.rpc("claim_chat_key", { p_key:k });
   if(error) return toast(chatErr(error.message));
   const row = Array.isArray(data) ? data[0] : data;
@@ -2261,11 +2304,306 @@ document.addEventListener("click", async (e) => {
     if(act === "chat-join"){ await joinChatByKey(); return; }
     if(act === "chat-send"){ await sendChatMessage(el.getAttribute("data-id")); return; }
     if(act === "chat-delete"){ await deleteChat(el.getAttribute("data-id")); return; }
+    if(act === "call-audio"){ await startCall(el.getAttribute("data-id"), false); return; }
+    if(act === "call-video"){ await startCall(el.getAttribute("data-id"), true); return; }
+    if(act === "group-create"){
+      const gi = document.getElementById("grpTitle");
+      await createGroup((gi && gi.value) || "", Number(el.getAttribute("data-sec")) || 0); return;
+    }
   }catch(err){
     console.error(err); diagError("chat_action_failed", err, { action:act });
     toast("Kuch galat ho gaya");
   }
 });
+
+
+/* ============================================================
+   PHASE 2 — CALLS (WebRTC over Supabase Realtime)
+   STUN-only. TURN ke bina kuch mobile networks par call fail ho sakti hai.
+   ============================================================ */
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }
+  ]
+};
+
+const callState = {
+  pc: null, local: null, chan: null, chatId: null,
+  video: false, active: false, isCaller: false,
+  remoteSet: false, pendingCand: [], pendingOffer: null
+};
+
+function callOverlay(){
+  let ov = document.getElementById("callOverlay");
+  if(ov) return ov;
+  ov = document.createElement("div");
+  ov.id = "callOverlay";
+  ov.className = "callov";
+  ov.innerHTML = `
+    <video id="callRemote" autoplay playsinline></video>
+    <video id="callLocal" autoplay playsinline muted></video>
+    <div class="calltop"><span id="callStatus">Connecting…</span></div>
+    <div class="callbar">
+      <button class="cbtn" id="callMute" aria-label="Mute">🎤</button>
+      <button class="cbtn" id="callCam" aria-label="Camera">🎥</button>
+      <button class="cbtn end" id="callEnd" aria-label="End call">✕</button>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector("#callEnd").onclick = () => { endCall(true); };
+  ov.querySelector("#callMute").onclick = () => {
+    const a = callState.local && callState.local.getAudioTracks()[0];
+    if(!a) return;
+    a.enabled = !a.enabled;
+    ov.querySelector("#callMute").classList.toggle("off", !a.enabled);
+  };
+  ov.querySelector("#callCam").onclick = () => {
+    const v = callState.local && callState.local.getVideoTracks()[0];
+    if(!v) return;
+    v.enabled = !v.enabled;
+    ov.querySelector("#callCam").classList.toggle("off", !v.enabled);
+  };
+  return ov;
+}
+
+function showCallUI(isCaller, video){
+  const ov = callOverlay();
+  ov.classList.add("show");
+  const lv = ov.querySelector("#callLocal");
+  if(lv){ lv.srcObject = callState.local; lv.style.display = video ? "block" : "none"; }
+  const cam = ov.querySelector("#callCam");
+  if(cam) cam.style.display = video ? "" : "none";
+  const st = ov.querySelector("#callStatus");
+  if(st) st.textContent = isCaller ? "Ringing…" : "Connecting…";
+}
+
+function callChannel(chatId){
+  if(callState.chan && callState.chatId === chatId) return callState.chan;
+  try{
+    if(callState.chan) sb.removeChannel(callState.chan);
+  }catch(e){}
+  const ch = sb.channel("call:" + chatId, { config: { broadcast: { self: false } } });
+  ch.on("broadcast", { event: "call" }, ({ payload }) => onCallSignal(payload));
+  ch.subscribe();
+  callState.chan = ch;
+  callState.chatId = chatId;
+  return ch;
+}
+
+function sendSignal(obj){
+  if(!callState.chan || !user) return;
+  callState.chan.send({
+    type: "broadcast", event: "call",
+    payload: Object.assign({ from: user.id, at: Date.now() }, obj)
+  });
+}
+
+function makePC(){
+  const pc = new RTCPeerConnection(ICE_SERVERS);
+  pc.onicecandidate = e => { if(e.candidate) sendSignal({ kind:"ice", candidate:e.candidate }); };
+  pc.ontrack = e => {
+    const v = document.getElementById("callRemote");
+    if(v && e.streams && e.streams[0]) v.srcObject = e.streams[0];
+  };
+  pc.onconnectionstatechange = () => {
+    const st = document.getElementById("callStatus");
+    if(!st) return;
+    const s = pc.connectionState;
+    st.textContent = s === "connected" ? "Connected" : (s === "connecting" ? "Connecting…" : s);
+  };
+  return pc;
+}
+
+async function startCall(chatId, video){
+  if(callState.active) return toast("Pehle se call chal rahi hai");
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return toast("Is browser me calling support nahi hai");
+  try{
+    callState.local = await navigator.mediaDevices.getUserMedia({
+      audio: true, video: video ? { width:{ideal:1280}, height:{ideal:720} } : false
+    });
+  }catch(e){ return toast("Mic/camera permission nahi mili"); }
+
+  callState.video = !!video;
+  callState.active = true;
+  callState.isCaller = true;
+  callState.remoteSet = false;
+  callState.pendingCand = [];
+  callState.pc = makePC();
+  callState.local.getTracks().forEach(t => callState.pc.addTrack(t, callState.local));
+
+  callChannel(chatId);
+  showCallUI(true, !!video);
+
+  try{
+    const offer = await callState.pc.createOffer();
+    await callState.pc.setLocalDescription(offer);
+    sendSignal({ kind:"ring", video:!!video });
+    sendSignal({ kind:"offer", sdp: callState.pc.localDescription });
+  }catch(e){ toast("Call setup fail"); endCall(false); return; }
+
+  dAct("call_started", "Call shuru ki", { chat_id:chatId, video:!!video });
+}
+
+function showIncoming(p){
+  let ov = document.getElementById("callIncoming");
+  if(!ov){
+    ov = document.createElement("div");
+    ov.id = "callIncoming";
+    ov.className = "callin";
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `<div class="callinbox">
+      <div style="font-size:34px">📞</div>
+      <div style="font-weight:700;margin-top:8px">Incoming ${p.video ? "video" : "audio"} call</div>
+      <div class="pmuted" style="font-size:13px">Anonymous</div>
+      <div style="display:flex;gap:10px;margin-top:18px">
+        <button class="btn" id="callReject" style="flex:1">Reject</button>
+        <button class="btn primary" id="callAccept" style="flex:1">Accept</button>
+      </div>
+    </div>`;
+  ov.style.display = "flex";
+  ov.querySelector("#callReject").onclick = () => { sendSignal({ kind:"end" }); hideIncoming(); };
+  ov.querySelector("#callAccept").onclick = () => acceptCall();
+}
+function hideIncoming(){
+  const ov = document.getElementById("callIncoming");
+  if(ov) ov.remove();
+}
+
+async function acceptCall(){
+  hideIncoming();
+  try{
+    callState.local = await navigator.mediaDevices.getUserMedia({
+      audio: true, video: callState.video ? { width:{ideal:1280}, height:{ideal:720} } : false
+    });
+  }catch(e){ return toast("Mic/camera permission nahi mili"); }
+  callState.active = true;
+  callState.isCaller = false;
+  callState.pc = makePC();
+  callState.local.getTracks().forEach(t => callState.pc.addTrack(t, callState.local));
+  showCallUI(false, callState.video);
+
+  if(callState.pendingOffer){
+    const sdp = callState.pendingOffer;
+    callState.pendingOffer = null;
+    await applyOffer(sdp);
+  } else {
+    sendSignal({ kind:"need-offer" });
+  }
+  dAct("call_accepted", "Call accept ki", { video:callState.video });
+}
+
+async function applyOffer(sdp){
+  try{
+    await callState.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    callState.remoteSet = true;
+    for(const c of callState.pendingCand){ try{ await callState.pc.addIceCandidate(c); }catch(e){} }
+    callState.pendingCand = [];
+    const ans = await callState.pc.createAnswer();
+    await callState.pc.setLocalDescription(ans);
+    sendSignal({ kind:"answer", sdp: callState.pc.localDescription });
+  }catch(e){ toast("Call connect nahi hui"); endCall(true); }
+}
+
+async function onCallSignal(p){
+  if(!p || !user || p.from === user.id) return;
+
+  if(p.kind === "ring"){
+    if(callState.active) return; /* busy */
+    callState.video = !!p.video;
+    callState.isCaller = false;
+    showIncoming(p);
+    return;
+  }
+  if(p.kind === "offer"){
+    if(!callState.active){ callState.pendingOffer = p.sdp; return; }
+    if(!callState.isCaller) await applyOffer(p.sdp);
+    return;
+  }
+  if(p.kind === "need-offer"){
+    if(callState.isCaller && callState.pc && callState.pc.localDescription){
+      sendSignal({ kind:"offer", sdp: callState.pc.localDescription });
+    }
+    return;
+  }
+  if(p.kind === "answer"){
+    if(callState.isCaller && callState.pc){
+      try{
+        await callState.pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
+        callState.remoteSet = true;
+        for(const c of callState.pendingCand){ try{ await callState.pc.addIceCandidate(c); }catch(e){} }
+        callState.pendingCand = [];
+      }catch(e){}
+    }
+    return;
+  }
+  if(p.kind === "ice"){
+    if(callState.pc && callState.remoteSet){
+      try{ await callState.pc.addIceCandidate(new RTCIceCandidate(p.candidate)); }catch(e){}
+    } else {
+      callState.pendingCand.push(p.candidate);
+    }
+    return;
+  }
+  if(p.kind === "end"){
+    if(callState.active){ endCall(false); toast("Call khatam ho gayi"); }
+    else hideIncoming();
+    return;
+  }
+}
+
+function endCall(send){
+  if(send) sendSignal({ kind:"end" });
+  try{ if(callState.pc) callState.pc.close(); }catch(e){}
+  try{ if(callState.local) callState.local.getTracks().forEach(t => t.stop()); }catch(e){}
+  callState.pc = null;
+  callState.local = null;
+  callState.active = false;
+  callState.remoteSet = false;
+  callState.pendingCand = [];
+  callState.pendingOffer = null;
+  const ov = document.getElementById("callOverlay");
+  if(ov) ov.remove();
+  hideIncoming();
+  dAct("call_ended", "Call khatam", {});
+}
+
+/* ============================================================
+   PHASE 3 — GROUPS (permanent + temp), group keys
+   ============================================================ */
+async function createGroup(title, seconds){
+  if(!user) return;
+  title = String(title || "").trim().slice(0, 60);
+  if(!title) return toast("Group ka naam daalo");
+  seconds = seconds ? Math.floor(Number(seconds)) : 0;
+  if(seconds && seconds < 10) return toast("Minimum 10 second");
+
+  const expires = seconds ? new Date(Date.now() + seconds * 1000).toISOString() : null;
+  const { data:ch, error } = await sb.from("chats")
+    .insert({ kind:"group", title, created_by:user.id, expires_at:expires })
+    .select().single();
+  if(error) return toast(friendlyError(error, "Group ban nahi paya"));
+
+  const m = await sb.from("chat_members").insert({ chat_id:ch.id, user_id:user.id });
+  if(m.error) return toast(friendlyError(m.error, "Group member add nahi hua"));
+
+  const key = newChatKey();
+  const k = await sb.from("chat_keys").insert({
+    owner:user.id, key, kind:"group", chat_id:ch.id, expires_at:expires
+  });
+  if(k.error) return toast(friendlyError(k.error, "Group key ban nahi payi"));
+
+  dAudit("group_created", "Group banaya", { chat_id:ch.id, temp:!!seconds });
+  toast("Group ban gaya 👥");
+  await loadChatKeys();
+  go("/chat/" + ch.id);
+}
+
+async function joinGroupByKey(k){
+  const { data, error } = await sb.rpc("claim_group_key", { p_key:k });
+  if(error) return null;
+  const row = Array.isArray(data) ? data[0] : data;
+  return row || null;
+}
 
 
 /* ============================================================
