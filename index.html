@@ -3109,14 +3109,120 @@ async function peerIdsFor(chatId){
   }catch(e){ return []; }
 }
 
+/* ============================================================
+   MIC / CAMERA PERMISSION FLOW
+   - pehle app ka consent dialog
+   - phir browser ka native prompt
+   - agar pehle se blocked hai → settings me allow karne ka tarika
+   ============================================================ */
+function permState(name){
+  return new Promise(res => {
+    try{
+      if(!navigator.permissions || !navigator.permissions.query) return res("unknown");
+      navigator.permissions.query({ name }).then(p => res(p.state)).catch(() => res("unknown"));
+    }catch(e){ res("unknown"); }
+  });
+}
+
+function mediaAskModal(video){
+  return new Promise(res => {
+    let ov = document.getElementById("mediaAsk");
+    if(!ov){
+      ov = document.createElement("div");
+      ov.id = "mediaAsk";
+      ov.className = "callin";
+      document.body.appendChild(ov);
+    }
+    ov.innerHTML = `<div class="callinbox">
+        <div style="font-size:34px">${video ? "🎥" : "🎤"}</div>
+        <div style="font-weight:700;margin-top:8px">${video ? "Camera + Mic chahiye" : "Mic chahiye"}</div>
+        <div class="pmuted" style="font-size:13px;margin-top:4px">Call ke liye permission do. Ye sirf call ke dauran use hoga — recording nahi hoti.</div>
+        <div style="display:flex;gap:10px;margin-top:18px">
+          <button class="btn" id="mediaNo" style="flex:1">Cancel</button>
+          <button class="btn primary" id="mediaYes" style="flex:1">Allow karo</button>
+        </div>
+        <div class="pmuted" style="font-size:11.5px;margin-top:12px">Agla step me browser apna permission prompt dikhayega — usme <b>Allow</b> dabana.</div>
+      </div>`;
+    ov.style.display = "flex";
+    const done = (v) => { ov.remove(); res(v); };
+    ov.querySelector("#mediaNo").onclick = () => done(false);
+    ov.querySelector("#mediaYes").onclick = () => done(true);
+  });
+}
+
+function mediaHelpModal(video, reason){
+  let ov = document.getElementById("mediaHelp");
+  if(!ov){
+    ov = document.createElement("div");
+    ov.id = "mediaHelp";
+    ov.className = "callin";
+    document.body.appendChild(ov);
+  }
+  const what = video ? "Microphone aur Camera" : "Microphone";
+  ov.innerHTML = `<div class="callinbox">
+      <div style="font-size:32px">🔒</div>
+      <div style="font-weight:700;margin-top:8px">${what} blocked hai</div>
+      <div class="pmuted" style="font-size:13px;margin-top:6px;text-align:left">
+        Browser ne pehle block kar diya hai, isliye prompt dobara nahi aayega. Aise allow karo:
+      </div>
+      <div class="pmuted" style="font-size:12.5px;margin-top:10px;text-align:left;line-height:1.6">
+        1. Address bar me <b>lock / ⓘ icon</b> dabao<br>
+        2. <b>Permissions</b> / <b>Site settings</b> kholo<br>
+        3. <b>${what}</b> ko <b>Allow</b> karo<br>
+        4. Page reload karo
+      </div>
+      <div style="display:flex;gap:10px;margin-top:18px">
+        <button class="btn" id="mediaHelpClose" style="flex:1">Close</button>
+        <button class="btn primary" id="mediaHelpRetry" style="flex:1">Retry</button>
+      </div>
+      ${reason ? `<div class="pmuted" style="font-size:11px;margin-top:10px">(${esc(String(reason))})</div>` : ""}
+    </div>`;
+  ov.style.display = "flex";
+  ov.querySelector("#mediaHelpClose").onclick = () => ov.remove();
+  ov.querySelector("#mediaHelpRetry").onclick = () => { ov.remove(); location.reload(); };
+}
+
+/* consent → browser prompt → friendly errors */
+async function getCallMedia(video){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    return toast("Is browser/app me mic support nahi hai");
+  }
+  const need = video ? ["microphone", "camera"] : ["microphone"];
+  for(const n of need){
+    const st = await permState(n);
+    if(st === "denied"){ mediaHelpModal(video, n + " blocked"); return null; }
+  }
+
+  const ok = await mediaAskModal(!!video);
+  if(!ok) return null;
+
+  try{
+    return await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: video ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false
+    });
+  }catch(e){
+    const name = (e && (e.name || e.message)) || "";
+    dcat("app", "warn", "call_media_denied", "getUserMedia fail: " + name, { video: !!video, error: name });
+    if(name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError"){
+      mediaHelpModal(video, name);
+    } else if(name === "NotFoundError" || name === "DevicesNotFoundError"){
+      toast(video ? "Camera ya mic nahi mila" : "Mic nahi mila");
+    } else if(name === "NotReadableError" || name === "TrackStartError"){
+      toast("Mic/camera kisi aur app me busy hai — band karke retry karo");
+    } else {
+      toast("Permission fail: " + (name || "unknown"));
+    }
+    return null;
+  }
+}
+
 async function startCall(chatId, video){
   if(callState.active) return toast("Pehle se call chal rahi hai");
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return toast("Is browser me calling support nahi hai");
-  try{
-    callState.local = await navigator.mediaDevices.getUserMedia({
-      audio: true, video: video ? { width:{ideal:1280}, height:{ideal:720} } : false
-    });
-  }catch(e){ return toast("Mic/camera permission nahi mili"); }
+  const stream = await getCallMedia(!!video);
+  if(!stream) return;
+  callState.local = stream;
 
   callState.video = !!video;
   callState.active = true;
@@ -3141,11 +3247,9 @@ async function acceptCall(){
   hideIncoming();
   stopRingtone();
   if(!p) return;
-  try{
-    callState.local = await navigator.mediaDevices.getUserMedia({
-      audio: true, video: p.video ? { width:{ideal:1280}, height:{ideal:720} } : false
-    });
-  }catch(e){ return toast("Mic/camera permission nahi mili"); }
+  const stream = await getCallMedia(!!p.video);
+  if(!stream) return;
+  callState.local = stream;
 
   callState.active = true;
   callState.isCaller = false;
