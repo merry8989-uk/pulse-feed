@@ -2803,7 +2803,8 @@ document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-act]");
   if(!el) return;
   const act = el.getAttribute("data-act");
-  if(!act || act.indexOf("chat-") !== 0) return;
+  /* chat-* ke saath call-* aur group-* bhi yahin handle hote hain */
+  if(!act || (act.indexOf("chat-") !== 0 && act.indexOf("call-") !== 0 && act.indexOf("group-") !== 0)) return;
   try{
     if(act === "chat-fixedkey"){ await ensureFixedKey(); render(); return; }
     if(act === "chat-tempkey"){ await createTempKey(Number(el.getAttribute("data-sec")) || 0); return; }
