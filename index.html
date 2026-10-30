@@ -1290,6 +1290,20 @@ function viewSettings(){
       <button class="btn block" style="margin-top:12px" data-act="db-check">Check database</button>
     </div>
     <div class="card">
+      <div style="font-weight:700;margin-bottom:6px">Calls — self test</div>
+      <div class="pmuted" style="font-size:13px">Call kaam na kare to pehle yahan check karo.</div>
+      ${_callTest ? `<div class="kv" style="margin-top:10px">
+        <div><span>Mic</span><b style="color:${_callTest.mic.ok?"var(--green)":"var(--danger)"}">${_callTest.mic.ok?"✓":"✗ "+esc(_callTest.mic.error||"")}</b></div>
+        <div><span>Camera</span><b style="color:${_callTest.cam.ok?"var(--green)":"var(--danger)"}">${_callTest.cam.ok?"✓":"✗ "+esc(_callTest.cam.error||"")}</b></div>
+        <div><span>Realtime</span><b style="color:${_callTest.rt.ok?"var(--green)":"var(--danger)"}">${_callTest.rt.ok?"✓":"✗ "+esc(_callTest.rt.status||"")}</b></div>
+        <div><span>HTTPS</span><b style="color:${_callTest.secure?"var(--green)":"var(--danger)"}">${_callTest.secure?"✓":"✗"}</b></div>
+        <div><span>TURN</span><b>${_callTest.turn} server${_callTest.customTurn?" (custom)":" (default)"}</b></div>
+        <div><span>Your user id</span><b style="font-size:11px">${esc(_callTest.uid||"—")}</b></div>
+      </div>` : ""}
+      <button class="btn block" style="margin-top:12px" data-act="call-selftest">Run call self test</button>
+      <div class="note" style="font-size:11.5px">Test me dono tabs ka <b>user id alag</b> hona chahiye — same account ho to call kabhi connect nahi hogi.</div>
+    </div>
+    <div class="card">
       <div style="font-weight:700;margin-bottom:6px">Calls — TURN server</div>
       <div class="pmuted" style="font-size:13px">Default: public relay (Open Relay). Apna TURN lagao to calls zyada reliable hongi — Metered / Cloudflare Calls / Twilio ka free tier chalega.</div>
       <label class="f">TURN URL</label>
@@ -1927,6 +1941,19 @@ document.addEventListener("click", async (e)=>{
   if(act==="diag-filter"){ diag.filter=actEl.getAttribute("data-level")||"all"; return render(); }
   if(act==="diag-cat"){ diag.catFilter=actEl.getAttribute("data-cat")||"all"; return render(); }
   if(act==="db-check"){ toast("Check kar raha hoon…"); await dbHealthCheck(); return render(); }
+  if(act==="call-selftest"){
+    toast("Test chal raha hai…");
+    const mic = await testMic();
+    const cam = await testCamera();
+    const rt = await testRealtime();
+    _callTest = { mic, cam, rt, secure: location.protocol === "https:",
+                  turn: turnServers().length, customTurn: customTurn().length > 0,
+                  uid: user ? user.id : null };
+    dcat("app", "info", "call_selftest", "Call self test", {
+      mic: mic.ok, camera: cam.ok, realtime: rt.ok, realtime_status: rt.status, https: _callTest.secure });
+    toast("Test poora hua");
+    return render();
+  }
   if(act==="turn-save"){
     const u=(document.getElementById("turnUrl").value||"").trim();
     const un=(document.getElementById("turnUser").value||"").trim();
@@ -2825,6 +2852,40 @@ function iceConfig(){
   return { iceServers: [...STUN_SERVERS, ...turnServers()], iceCandidatePoolSize: 2 };
 }
 
+/* ---------- self test ---------- */
+function testMic(){
+  return new Promise(res => {
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return res({ ok:false, error:"getUserMedia available nahi hai" });
+    navigator.mediaDevices.getUserMedia({ audio:true }).then(s => {
+      s.getTracks().forEach(t => t.stop());
+      res({ ok:true });
+    }).catch(e => res({ ok:false, error:(e && (e.name || e.message)) || "denied" }));
+  });
+}
+function testCamera(){
+  return new Promise(res => {
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return res({ ok:false, error:"getUserMedia available nahi hai" });
+    navigator.mediaDevices.getUserMedia({ video:true }).then(s => {
+      s.getTracks().forEach(t => t.stop());
+      res({ ok:true });
+    }).catch(e => res({ ok:false, error:(e && (e.name || e.message)) || "denied" }));
+  });
+}
+function testRealtime(){
+  return new Promise(res => {
+    let done = false;
+    const name = "selftest:" + Math.random().toString(36).slice(2, 8);
+    const ch = sb.channel(name, { config:{ broadcast:{ self:false } } });
+    const t = setTimeout(() => { if(!done){ done = true; try{ sb.removeChannel(ch); }catch(e){} res({ ok:false, status:"TIMEOUT" }); } }, 9000);
+    ch.subscribe(st => {
+      if(done) return;
+      if(st === "SUBSCRIBED"){ done = true; clearTimeout(t); try{ sb.removeChannel(ch); }catch(e){} res({ ok:true, status:st }); }
+      else if(st === "CHANNEL_ERROR" || st === "TIMED_OUT"){ done = true; clearTimeout(t); try{ sb.removeChannel(ch); }catch(e){} res({ ok:false, status:st }); }
+    });
+  });
+}
+let _callTest = null;
+
 const callState = {
   peers: new Map(),        /* userId -> { pc, videoEl } */
   local: null,
@@ -2833,7 +2894,9 @@ const callState = {
   video: false, active: false, isCaller: false,
   pending: new Map(),      /* userId -> [candidates] */
   remoteSet: new Map(),    /* userId -> bool */
-  seen: new Set()          /* ring dedupe */
+  seen: new Set(),         /* ring dedupe */
+  chanReady: false,
+  outbox: []
 };
 
 /* ---------- ringtone ---------- */
@@ -2936,7 +2999,19 @@ function callChannel(chatId){
   try{ if(callState.chan) sb.removeChannel(callState.chan); }catch(e){}
   const ch = sb.channel("call:" + chatId, { config: { broadcast: { self: false } } });
   ch.on("broadcast", { event: "call" }, ({ payload }) => onCallSignal(payload));
-  ch.subscribe();
+  callState.chanReady = false;
+  callState.outbox = [];
+  ch.subscribe((st) => {
+    dcat("app", "info", "call_channel_state", "Realtime: " + st, { chat_id: chatId, state: st });
+    if(st === "SUBSCRIBED"){
+      callState.chanReady = true;
+      const q = callState.outbox.splice(0);
+      q.forEach(pl => { try{ ch.send({ type:"broadcast", event:"call", payload: pl }); }catch(e){} });
+    }
+    if(st === "CHANNEL_ERROR" || st === "TIMED_OUT"){
+      setStatus("Realtime connect nahi hua (" + st + ")");
+    }
+  });
   callState.chan = ch; callState.chatId = chatId;
   return ch;
 }
@@ -2950,9 +3025,14 @@ function ringChannel(){
   return ch;
 }
 function sendSignal(obj, to){
-  if(!callState.chan) return;
-  callState.chan.send({ type:"broadcast", event:"call",
-    payload: Object.assign({ from: user.id, to: to || null, callId: callState.callId, at: Date.now() }, obj) });
+  const ch = callState.chan;
+  if(!ch) return;
+  const payload = Object.assign({ from: user.id, to: to || null, callId: callState.callId, at: Date.now() }, obj);
+  if(callState.chanReady){
+    try{ ch.send({ type:"broadcast", event:"call", payload }); }catch(e){}
+  } else {
+    callState.outbox.push(payload);   /* subscribe hone se pehle → queue */
+  }
 }
 function sendRing(toUserId, chatId, video){
   try{
@@ -3050,7 +3130,8 @@ async function startCall(chatId, video){
   const peers = await peerIdsFor(chatId);
   peers.forEach(pid => sendRing(pid, chatId, video));
   sendSignal({ kind:"ring", video:!!video });   /* jo log chat me hain unko bhi */
-  setStatus("Ringing…");
+  setStatus("Ringing… (" + peers.length + " ko bheja)");
+  dcat("app", "info", "call_ring_sent", "Ring bheja", { chat_id: chatId, peers: peers.length, video: !!video });
   dAct("call_started", "Call shuru ki", { chat_id: chatId, video: !!video, peers: peers.length });
 }
 
@@ -3154,18 +3235,21 @@ async function onCallSignal(p){
 
   if(p.kind === "join"){
     if(!callState.active) return;
+    setStatus("Join mila — offer bhej raha hoon");
+    dcat("app", "info", "call_join_received", "Join mila", { peer: p.from });
     /* naya member aaya → usko offer bhejo */
     const pc = callState.peers.get(p.from) ? callState.peers.get(p.from).pc : newPeer(p.from);
     try{
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       sendSignal({ kind:"offer", sdp: pc.localDescription }, p.from);
-    }catch(e){}
+    }catch(e){ diagError("call_offer_failed", e); }
     return;
   }
 
   if(p.kind === "offer"){
     if(!callState.active) return;
+    setStatus("Offer mila — answer bhej raha hoon");
     const pc = callState.peers.get(p.from) ? callState.peers.get(p.from).pc : newPeer(p.from);
     try{
       await pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
@@ -3176,7 +3260,8 @@ async function onCallSignal(p){
       const ans = await pc.createAnswer();
       await pc.setLocalDescription(ans);
       sendSignal({ kind:"answer", sdp: pc.localDescription }, p.from);
-    }catch(e){}
+      setStatus("Answer bheja — connecting…");
+    }catch(e){ diagError("call_answer_failed", e); }
     return;
   }
 
