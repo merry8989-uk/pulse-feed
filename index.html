@@ -184,8 +184,10 @@
   .cbtn{width:58px;height:58px;border-radius:50%;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.12);color:#fff;font-size:20px;cursor:pointer}
   .cbtn.off{background:rgba(255,255,255,.05);opacity:.5}
   .cbtn.end{background:#e5484d;border-color:transparent}
-  .callvids{position:absolute;inset:0;display:grid;gap:6px;grid-template-columns:1fr}
+  .callvids{position:absolute;inset:0;display:grid;gap:6px;grid-template-columns:1fr;grid-auto-rows:1fr;padding:0}
+  .calltile{position:relative;overflow:hidden;background:#0b0c10;min-height:0}
   .callvid{width:100%;height:100%;object-fit:cover;background:#000;display:block}
+  .callaudio{position:absolute;inset:0;display:grid;place-items:center;align-content:center;gap:4px;color:#fff;text-align:center;background:#11141c}
   .callcnt{font-size:11px;opacity:.75;margin-left:6px}
   .callin{position:fixed;inset:0;background:rgba(4,5,9,.82);z-index:210;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px)}
   .callinbox{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:26px 22px;text-align:center;max-width:320px;width:86%}
@@ -2963,21 +2965,31 @@ function callOverlay(){
 function callVideoEl(userId){
   const box = document.getElementById("callVideos");
   if(!box) return null;
-  let v = box.querySelector('[data-vid="' + userId + '"]');
-  if(!v){
-    v = document.createElement("video");
-    v.dataset.vid = userId;
-    v.autoplay = true; v.playsInline = true;
-    v.className = "callvid";
-    box.appendChild(v);
-    layoutVideos();
+  let tile = box.querySelector('[data-tile="' + userId + '"]');
+  if(tile) return tile.querySelector("video");
+
+  tile = document.createElement("div");
+  tile.className = "calltile";
+  tile.dataset.tile = userId;
+
+  const v = document.createElement("video");
+  v.autoplay = true; v.playsInline = true; v.className = "callvid";
+  tile.appendChild(v);
+
+  if(!callState.video){
+    const ph = document.createElement("div");
+    ph.className = "callaudio";
+    ph.innerHTML = '<div style="font-size:36px">📞</div><div style="font-size:12px;opacity:.7">Connected</div>';
+    tile.appendChild(ph);
   }
+  box.appendChild(tile);
+  layoutVideos();
   return v;
 }
 function layoutVideos(){
   const box = document.getElementById("callVideos");
   if(!box) return;
-  const n = box.children.length;
+  const n = box.querySelectorAll("[data-tile]").length;
   box.style.gridTemplateColumns = n <= 1 ? "1fr" : "1fr 1fr";
   const c = document.getElementById("callCount");
   if(c) c.textContent = n > 1 ? "(" + (n + 1) + " log)" : "";
@@ -3018,7 +3030,13 @@ function callChannel(chatId){
 }
 function ringChannel(){
   if(!user) return null;
+  /* account badla to purana channel hatao */
+  if(callState.ringChan && callState.ringUserId !== user.id){
+    try{ sb.removeChannel(callState.ringChan); }catch(e){}
+    callState.ringChan = null;
+  }
   if(callState.ringChan) return callState.ringChan;
+  callState.ringUserId = user.id;
   const ch = sb.channel("ring:" + user.id, { config: { broadcast: { self: false } } });
   ch.on("broadcast", { event: "ring" }, ({ payload }) => handleRing(payload));
   ch.subscribe();
@@ -3052,8 +3070,9 @@ function sendRing(toUserId, chatId, video){
 function newPeer(userId){
   const pc = new RTCPeerConnection(iceConfig());
   const el = callVideoEl(userId);
-  callState.pending.set(userId, []);
-  callState.remoteSet.set(userId, false);
+  /* pehle se aaye hue ICE candidates ko mat wipe karo */
+  if(!callState.pending.has(userId)) callState.pending.set(userId, []);
+  if(!callState.remoteSet.has(userId)) callState.remoteSet.set(userId, false);
 
   pc.onicecandidate = e => { if(e.candidate) sendSignal({ kind:"ice", candidate:e.candidate }, userId); };
   pc.ontrack = e => {
@@ -3076,7 +3095,11 @@ function newPeer(userId){
 }
 function dropPeer(userId){
   const p = callState.peers.get(userId);
-  if(p){ try{ p.pc.close(); }catch(e){} if(p.el) p.el.remove(); }
+  if(p){ try{ p.pc.close(); }catch(e){} }
+  try{
+    const t = document.querySelector('[data-tile="' + userId + '"]');
+    if(t) t.remove();
+  }catch(e){}
   callState.peers.delete(userId);
   callState.pending.delete(userId);
   callState.remoteSet.delete(userId);
@@ -3238,6 +3261,7 @@ async function startCall(chatId, video){
   peers.forEach(pid => sendRing(pid, chatId, video));
   sendSignal({ kind:"ring", video:!!video });   /* jo log chat me hain unko bhi */
   setStatus("Ringing… (" + peers.length + " ko bheja)");
+  callWatchdog();
   dcat("app", "info", "call_ring_sent", "Ring bheja", { chat_id: chatId, peers: peers.length, video: !!video });
   dAct("call_started", "Call shuru ki", { chat_id: chatId, video: !!video, peers: peers.length });
 }
@@ -3248,7 +3272,10 @@ async function acceptCall(){
   stopRingtone();
   if(!p) return;
   const stream = await getCallMedia(!!p.video);
-  if(!stream) return;
+  if(!stream){
+    try{ callChannel(p.chatId); sendSignal({ kind:"end" }); }catch(e){}
+    return;
+  }
   callState.local = stream;
 
   callState.active = true;
@@ -3262,9 +3289,22 @@ async function acceptCall(){
   showCallUI(!!p.video);
   sendSignal({ kind:"join", video:!!p.video });
   setStatus("Connecting…");
+  callWatchdog();
   dAct("call_accepted", "Call accept ki", { video: !!p.video });
 
   if(location.hash !== "#/chat/" + p.chatId) go("/chat/" + p.chatId);
+}
+
+function callWatchdog(){
+  const myId = callState.callId;
+  setTimeout(() => {
+    if(!callState.active || callState.callId !== myId) return;
+    const connected = [...callState.peers.values()].some(p => p.pc.connectionState === "connected");
+    if(!connected){
+      setStatus("Connect nahi hua — network/TURN check karo");
+      dcat("performance", "warn", "call_timeout", "Call 20s me connect nahi hui", { peers: callState.peers.size });
+    }
+  }, 20000);
 }
 
 function endCall(send){
